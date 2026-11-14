@@ -1,0 +1,11 @@
+exemptions:
+  - id: ex-valid-drop
+    rule_id: destructive.drop_table
+    path_glob: "0002_drop_staging.up.sql"
+    reason: "demo fixture: staging archive deletion was manually reviewed"
+    expires_on: "2030-01-01"
+  - id: ex-expired-grant
+    rule_id: permissions.grant_revoke_not_allowed
+    path_glob: "0003_grant_reader.up.sql"
+    reason: "demo fixture: expired exemption remains visible in the report"
+    expires_on: "2024-01-01"

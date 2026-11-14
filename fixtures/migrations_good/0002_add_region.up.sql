@@ -1,0 +1,2 @@
+ALTER TABLE demo_accounts
+    ADD COLUMN IF NOT EXISTS region VARCHAR(16) NOT NULL DEFAULT 'unknown';

@@ -1,0 +1,1 @@
+ALTER TABLE demo_events DROP COLUMN IF EXISTS region;

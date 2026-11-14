@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS demo_comment_down (
+    id INTEGER PRIMARY KEY
+);

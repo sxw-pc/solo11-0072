@@ -1,0 +1,37 @@
+project: qianshen-audit
+version: 1
+
+migrations_dir: fixtures/migrations_risky
+dialect: postgres
+naming:
+  mode: auto
+  version_width: 4
+
+ignore:
+  dirs: [.git, __pycache__, node_modules]
+  globs: ["*.tmp.sql", "*.sql.bak"]
+  paths: []
+
+rules_file: rules/default.yml
+exemptions_file: null
+baseline_file: null
+
+output_dir: out
+ledger_path: .qianshen/ledger.sqlite3
+
+fail_on: blocker
+clock: "2026-01-01T00:00:00Z"
+
+# 仅用于演示“大表 DDL 在线策略”规则；名称为合成占位。
+large_tables:
+  - demo_events
+
+permissions:
+  allow_grants: false
+
+pairing:
+  check_rollback: true
+
+irreversible_approvals: []
+
+rule_overrides: {}

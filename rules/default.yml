@@ -1,0 +1,215 @@
+version: 1
+rules:
+  - id: destructive.drop_table
+    title: 删除表
+    severity: blocker
+    category: destructive_ddl
+    applies_to: [statement]
+    directions: [up, single]
+    match: {kind: [drop_table]}
+    message: "DROP TABLE 会删除表结构与数据: {object}"
+    suggestion: 确认数据已归档或备份；在 up 文件中加入不可逆人工确认标记，并提供可证明的 down 覆盖。
+    enabled: true
+
+  - id: destructive.drop_column
+    title: 删除列
+    severity: blocker
+    category: destructive_ddl
+    applies_to: [statement]
+    directions: [up, single]
+    match: {actions_any: [drop_column]}
+    message: "DROP COLUMN 可能造成列数据永久丢失: {object}"
+    suggestion: 先停用读写并完成归档，再单独评审删除窗口；不要自动生成数据恢复 SQL。
+    enabled: true
+
+  - id: destructive.truncate
+    title: 清空表
+    severity: blocker
+    category: destructive_ddl
+    applies_to: [statement]
+    directions: [up, single]
+    match: {kind: [truncate]}
+    message: "TRUNCATE 会清空表数据: {object}"
+    suggestion: 确认存在备份与人工确认标记，并核对 down 是否具备业务可接受的回退说明。
+    enabled: true
+
+  - id: destructive.drop_constraint
+    title: 删除约束
+    severity: warning
+    category: destructive_ddl
+    applies_to: [statement]
+    directions: [up, single]
+    match: {actions_any: [drop_constraint]}
+    message: "删除约束可能放宽完整性保证: {object}"
+    suggestion: 说明约束删除原因、影响范围与恢复方式。
+    enabled: true
+
+  - id: destructive.drop_index
+    title: 删除索引
+    severity: warning
+    category: destructive_ddl
+    applies_to: [statement]
+    directions: [up, single]
+    match: {kind: [drop_index]}
+    message: "删除索引可能影响查询性能: {object}"
+    suggestion: 核对索引用途与数据库性能影响，并在 down 中可重建。
+    enabled: true
+
+  - id: dml.update_without_where
+    title: 无 WHERE 的 UPDATE
+    severity: blocker
+    category: dangerous_dml
+    applies_to: [statement]
+    match: {kind: [update], where: false}
+    message: "UPDATE 没有 WHERE 条件: {object}"
+    suggestion: 明确限定影响行范围；在评审记录中给出预计行数与回退方式。
+    enabled: true
+
+  - id: dml.delete_without_where
+    title: 无 WHERE 的 DELETE
+    severity: blocker
+    category: dangerous_dml
+    applies_to: [statement]
+    match: {kind: [delete], where: false}
+    message: "DELETE 没有 WHERE 条件: {object}"
+    suggestion: 明确限定影响行范围；确认数据可恢复且不覆盖迁移之外的数据。
+    enabled: true
+
+  - id: schema.add_not_null_without_default
+    title: 新增 NOT NULL 列但无默认值或回填
+    severity: blocker
+    category: constraint_risk
+    applies_to: [statement]
+    directions: [up, single]
+    match:
+      kind: [alter_table_add_column, alter_table]
+      not_null: true
+      has_default: false
+      requires_no_backfill: true
+    message: "新增 NOT NULL 列缺少默认值，且同一文件未发现回填 UPDATE: {object}"
+    suggestion: 先加可空列并回填，再收紧约束；或提供安全默认值与分批策略。
+    enabled: true
+
+  - id: schema.type_narrowing
+    title: 列类型收窄
+    severity: blocker
+    category: type_risk
+    applies_to: [statement]
+    directions: [up, single]
+    match: {kind: [alter_table_alter_type, alter_table], type_change: [narrowing]}
+    message: "列类型变更被判定为收窄，可能截断数据: {object}"
+    suggestion: 先评估数据分布与最大长度；使用扩展-回填-切换的分阶段迁移。
+    enabled: true
+
+  - id: schema.type_incompatible
+    title: 列类型不兼容变更
+    severity: warning
+    category: type_risk
+    applies_to: [statement]
+    directions: [up, single]
+    match: {kind: [alter_table_alter_type, alter_table], type_change: [incompatible]}
+    message: "列类型族发生变化，需要验证转换语义: {object}"
+    suggestion: 明确 USING/转换规则并进行离线样本核验；不得直接假设自动转换安全。
+    enabled: true
+
+  - id: availability.large_table_ddl_without_online
+    title: 大表 DDL 未声明在线/并发策略
+    severity: warning
+    category: lock_availability
+    applies_to: [file]
+    directions: [up, single]
+    match: {check: large_table_ddl_offline}
+    message: "配置中的大表执行 DDL 但未声明在线策略: {object}"
+    suggestion: "在文件声明 CONCURRENTLY、ALGORITHM=INPLACE、ONLINE=ON，或加入 qianshen: online 标记并说明演练结果。"
+    enabled: true
+
+  - id: availability.ddl_dml_in_transaction
+    title: 同一事务混合 DDL 与 DML
+    severity: warning
+    category: lock_availability
+    applies_to: [file]
+    match: {check: ddl_dml_in_transaction}
+    message: "同一事务内混合 DDL/DML: {file}"
+    suggestion: 拆分 DDL 与数据变更，分别验证锁持有时间与失败回退路径。
+    enabled: true
+
+  - id: availability.long_transaction_marker
+    title: 显式长事务风险标记
+    severity: warning
+    category: lock_availability
+    applies_to: [file]
+    directions: [up, single]
+    match: {check: long_transaction_marker}
+    message: "文件包含长事务风险标记: {file}"
+    suggestion: 给出预计执行时长、锁影响与中断策略，并优先拆分。
+    enabled: true
+
+  - id: idempotency.create_table_without_if_not_exists
+    title: CREATE TABLE 缺少 IF NOT EXISTS
+    severity: warning
+    category: reentrancy
+    applies_to: [statement]
+    match: {kind: [create_table], if_not_exists: false}
+    message: "CREATE TABLE 未声明 IF NOT EXISTS: {object}"
+    suggestion: 如果迁移可能在半完成状态下重跑，加入 IF NOT EXISTS 并核对对象已存在的风险。
+    enabled: true
+
+  - id: idempotency.add_column_without_if_not_exists
+    title: ADD COLUMN 缺少 IF NOT EXISTS
+    severity: warning
+    category: reentrancy
+    applies_to: [statement]
+    match: {actions_any: [add_column], if_not_exists: false}
+    message: "ADD COLUMN 未声明 IF NOT EXISTS: {object}"
+    suggestion: 评估重跑语义；不同数据库对 ADD COLUMN IF NOT EXISTS 的支持不同，按目标方言确认。
+    enabled: true
+
+  - id: idempotency.drop_without_if_exists
+    title: DROP 缺少 IF EXISTS
+    severity: warning
+    category: reentrancy
+    applies_to: [statement]
+    match: {kind: [drop_table, drop_index, drop_view], if_exists: false}
+    message: "DROP 未声明 IF EXISTS: {object}"
+    suggestion: 在可重跑迁移中加入 IF EXISTS，或明确该文件只允许单次执行。
+    enabled: true
+
+  - id: idempotency.duplicate_object_in_file
+    title: 同一文件重复定义对象
+    severity: warning
+    category: reentrancy
+    applies_to: [file]
+    match: {check: duplicate_object}
+    message: "同一文件重复定义对象: {object}"
+    suggestion: 合并重复定义并确认最终 schema 状态；检查迁移重跑时的冲突路径。
+    enabled: true
+
+  - id: idempotency.fixed_key_insert
+    title: 固定主键 INSERT
+    severity: warning
+    category: reentrancy
+    applies_to: [file]
+    match: {check: fixed_key_insert}
+    message: "固定主键写入在重复执行时可能冲突: {object}"
+    suggestion: 使用幂等 upsert 或先检查存在性；不得据此断言业务主键策略错误。
+    enabled: true
+
+  - id: idempotency.accumulating_update
+    title: 累计更新可能重复生效
+    severity: warning
+    category: reentrancy
+    applies_to: [file]
+    match: {check: non_idempotent_dml}
+    message: "累计更新在重复执行时可能二次扣减: {object}"
+    suggestion: 使用明确目标值的更新，或引入幂等键/状态闸门；该结论仅为静态提示。
+    enabled: true
+
+  - id: permissions.grant_revoke_not_allowed
+    title: 迁移中出现权限变更
+    severity: warning
+    category: permissions
+    applies_to: [statement]
+    match: {kind: [grant, revoke], permission_not_allowed: true}
+    message: "迁移中出现 GRANT/REVOKE 且配置未允许: {object}"
+    suggestion: 将权限变更移出 schema 迁移，或由授权负责人显式配置 allow_grants。
+    enabled: true

@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS demo_conflict (
+    id INTEGER PRIMARY KEY
+);

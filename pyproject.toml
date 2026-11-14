@@ -1,0 +1,33 @@
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "qianshen-audit"
+version = "0.1.0"
+description = "迁签审台：本地 SQL 迁移脚本静态评审、回滚配对核验与审计留痕"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "qianshen-audit contributors"}]
+dependencies = [
+  "sqlglot>=25",
+  "PyYAML>=6",
+]
+keywords = ["sql", "migration", "static-analysis", "audit", "offline"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Environment :: Console",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.scripts]
+qianshen-audit = "qianshen.cli:main"
+
+[tool.poetry]
+packages = [{include = "qianshen", from = "src"}]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

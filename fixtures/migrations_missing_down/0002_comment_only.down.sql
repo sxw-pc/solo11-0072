@@ -1,0 +1,2 @@
+-- Synthetic fixture: down intentionally only contains comments.
+-- This must be reported as an empty rollback, not silently ignored.

@@ -1,0 +1,2 @@
+ALTER TABLE demo_orders ALTER COLUMN status TYPE VARCHAR(20);
+ALTER TABLE demo_orders DROP COLUMN IF EXISTS note;

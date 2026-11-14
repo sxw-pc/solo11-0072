@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS demo_orphan (
+    id INTEGER PRIMARY KEY
+);

@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS demo_audit_base (
+    id INTEGER PRIMARY KEY
+);

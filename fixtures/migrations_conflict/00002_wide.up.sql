@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS demo_wide_version (
+    id INTEGER PRIMARY KEY
+);
