@@ -4,6 +4,7 @@ import re
 from typing import Any
 import sqlglot
 from sqlglot import ErrorLevel, exp
+from .fk_extract import extract_alter_foreign_keys, extract_create_foreign_keys
 from .models import FileInfo, StatementInfo
 from .sql_fallback import token_classify
 from .sql_split import split_sql, strip_comments
@@ -42,6 +43,7 @@ def _table_name(node: exp.Expression | None) -> str:
         return node.name
     return getattr(node, "name", "") or ""
 
+
 def _classify_create(ast: exp.Create) -> tuple[str, list[str], dict[str, Any]]:
     kind_word = str(ast.args.get("kind") or "TABLE").lower()
     attrs: dict[str, Any] = {"if_not_exists": bool(ast.args.get("exists"))}
@@ -57,33 +59,44 @@ def _classify_create(ast: exp.Create) -> tuple[str, list[str], dict[str, Any]]:
         attrs["columns"] = [
             _column_record(item) for item in ast.this.expressions if isinstance(item, exp.ColumnDef)
         ]
+        foreign_keys = extract_create_foreign_keys(ast, table)
+        if foreign_keys:
+            attrs["foreign_keys"] = foreign_keys
     return f"create_{kind_word}", [table] if table else [], attrs
 
 def _classify_alter(ast: exp.Alter) -> tuple[str, list[str], dict[str, Any]]:
     table = _table_name(ast.this)
     attrs: dict[str, Any] = {
-        "table": table, "actions": [], "added_columns": [], "type_alterations": []
+        "table": table, "actions": [], "added_columns": [], "type_alterations": [],
+        "foreign_keys": [], "dropped_constraints": [], "renamed_tables": [],
     }
     objects = [table] if table else []
-    for action in ast.args.get("actions") or []:
+    raw_actions = ast.args.get("actions") or []
+    foreign_keys, dropped_constraints = extract_alter_foreign_keys(ast, table)
+    if foreign_keys:
+        attrs["foreign_keys"] = foreign_keys
+    if dropped_constraints:
+        attrs["dropped_constraints"] = dropped_constraints
+    if len(raw_actions) > 1:
+        attrs["multi_action"] = True
+    for action in raw_actions:
         if isinstance(action, exp.ColumnDef):
             record = _column_record(action)
             attrs["actions"].append("add_column")
             attrs["added_columns"].append(record)
             attrs.setdefault("add_column_if_not_exists", bool(action.args.get("exists")))
-            objects.extend(filter(None, [f"{table}.{record['name']}"]))
+            objects.append(f"{table}.{record['name']}" if table else record["name"])
         elif isinstance(action, exp.Drop):
             drop_kind = str(action.args.get("kind") or "").upper()
-            target = action.args.get("tables") or []
-            name = target[0].name if target else ""
+            target = (action.args.get("tables") or [None])[0]
+            name = getattr(target, "name", "") or ""
             if drop_kind == "CONSTRAINT":
                 attrs["actions"].append("drop_constraint")
                 attrs["dropped_constraint"] = name
-                objects.append(f"{table}.{name}" if table else name)
             else:
                 attrs["actions"].append("drop_column")
                 attrs["dropped_column"] = name
-                objects.append(f"{table}.{name}" if table else name)
+            objects.append(f"{table}.{name}" if table else name)
         elif isinstance(action, exp.AlterColumn):
             column_name = action.name
             if isinstance(action.args.get("dtype"), exp.DataType):
@@ -104,7 +117,9 @@ def _classify_alter(ast: exp.Alter) -> tuple[str, list[str], dict[str, Any]]:
                 attrs["actions"].append("alter_column")
         elif isinstance(action, exp.AlterRename):
             attrs["actions"].append("rename_table")
-            attrs["renamed_table"] = _table_name(action.this)
+            new_name = _table_name(action.this)
+            attrs["renamed_table"] = new_name
+            attrs["renamed_tables"].append(new_name)
         elif isinstance(action, exp.RenameColumn):
             attrs["actions"].append("rename_column")
             attrs["renamed_column"] = [action.name, _table_name(action.args.get("to"))]
@@ -117,8 +132,7 @@ def _classify_alter(ast: exp.Alter) -> tuple[str, list[str], dict[str, Any]]:
     if actions and all(item == "add_column" for item in actions):
         attrs["has_if_not_exists"] = all(
             bool(action.args.get("exists"))
-            for action in ast.args.get("actions") or []
-            if isinstance(action, exp.ColumnDef)
+            for action in raw_actions if isinstance(action, exp.ColumnDef)
         )
     return kind, [item for item in objects if item], attrs
 
@@ -191,26 +205,14 @@ def parse_statement(
     if not parse_warning and not parse_ok:
         parse_warning = "unsupported_statement_form"
     return StatementInfo(
-        file_rel=file.rel_path,
-        file_sha256=file.sha256,
-        version=file.version,
-        direction=file.direction,
-        seq=seq,
-        start_line=start_line,
-        end_line=end_line,
-        kind=kind,
-        ast_kind=ast_kind,
-        objects=sorted(set(objects)),
-        actions=list(attrs.get("actions", [])),
-        is_ddl=kind in DDL_KINDS,
+        file_rel=file.rel_path, file_sha256=file.sha256, version=file.version,
+        direction=file.direction, seq=seq, start_line=start_line, end_line=end_line,
+        kind=kind, ast_kind=ast_kind, objects=sorted(set(objects)),
+        actions=list(attrs.get("actions", [])), is_ddl=kind in DDL_KINDS,
         is_dml=kind in ("insert", "update", "delete"),
         is_transaction=kind in ("begin", "commit", "rollback"),
-        summary=truncate(source, 180),
-        sha256=sha256_text(raw.strip()),
-        parse_ok=parse_ok,
-        parse_warning=parse_warning,
-        attrs=attrs,
-        raw=raw,
+        summary=truncate(source, 180), sha256=sha256_text(raw.strip()),
+        parse_ok=parse_ok, parse_warning=parse_warning, attrs=attrs, raw=raw,
     )
 
 def parse_file(file: FileInfo, dialect: str) -> tuple[list[StatementInfo], list[dict[str, Any]]]:
@@ -222,16 +224,11 @@ def parse_file(file: FileInfo, dialect: str) -> tuple[list[StatementInfo], list[
         )
         statements.append(statement)
         if not statement.parse_ok:
-            warnings.append(
-                {
-                    "stage": "parse",
-                    "file": file.rel_path,
-                    "line": start_line,
-                    "statement_seq": index,
-                    "code": "parse_fallback",
-                    "message": statement.parse_warning or "parse fallback",
-                }
-            )
+            warnings.append({
+                "stage": "parse", "file": file.rel_path, "line": start_line,
+                "statement_seq": index, "code": "parse_fallback",
+                "message": statement.parse_warning or "parse fallback",
+            })
     return statements, warnings
 
 def parse_all(

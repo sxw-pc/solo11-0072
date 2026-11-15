@@ -43,5 +43,15 @@ def test_demo_writes_six_self_contained_fixture_reports(tmp_path: Path, monkeypa
             path.name for path in directory.iterdir()
         }
         assert "http" not in (directory / "report.html").read_text(encoding="utf-8").lower()
+    risky_data = json.loads((output / "risky" / "findings.json").read_text(encoding="utf-8"))
+    fk_findings = [
+        item for item in risky_data["findings"]
+        if item["rule_id"] == "rollback.foreign_key_order"
+    ]
+    assert fk_findings and fk_findings[0]["severity"] == "blocker"
+    risky_pair = next(
+        pair for pair in risky_data["rollback"]["pairs"] if pair["version"] == 7
+    )
+    assert risky_pair["foreign_key_order"]["edges"][0]["referenced_table"] == "demo_invoice_parent"
     index = (output / "index.html").read_text(encoding="utf-8").lower()
     assert "<script" not in index and "http://" not in index and "https://" not in index

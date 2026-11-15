@@ -149,7 +149,10 @@ NNNN_description.sql         # 单文件模式
 │   ├── version_chain.py         # 版本链、baseline、输入清单
 │   ├── rules_engine.py          # YAML 规则加载、作用域、匹配
 │   ├── file_checks.py           # 文件级规则检查
-│   ├── rollback_pair.py         # up/down 配对与不可逆核验
+│   ├── rollback_pair.py         # up/down 配对、覆盖与不可逆核验
+│   ├── fk_extract.py            # 外键引用边的 AST 提取
+│   ├── fk_common.py             # 外键顺序审查的数据结构与辅助
+│   ├── fk_order.py              # up/down 外键依赖语句顺序审查
 │   ├── idempotency.py           # 可解释幂等性评分
 │   ├── exemptions.py            # 豁免加载、过期与命中
 │   ├── diffing.py               # 稳定指纹差异
@@ -261,6 +264,9 @@ rule_overrides: {}
 - 每个版本必须有同名 up/down 文件（单文件模式会明确提示跳过配对）。
 - down 文件不能为空或只有注释。
 - 工具比较表、列、索引、约束、视图、类型等对象键；down 未覆盖主要对象时报告对象不匹配。
+- **外键依赖顺序审查**：解析 CREATE TABLE 内联 REFERENCES、表级 FOREIGN KEY 与 ALTER TABLE ADD CONSTRAINT 形成的外键边（保留约束名、源表、被引用表、文件、版本、方向与语句位置），按语句顺序核验——up 中父表必须先于子表创建，down 中子表必须先于父表删除。顺序颠倒时产生 `rollback.foreign_key_order` 阻断发现，证据指出依赖边与两条语句位置。
+- 自引用外键与无关表不阻断；外键在后续版本已删除后再删除父表，不会被更早版本的历史依赖永久阻断（down 按版本降序模拟真实回滚顺序）。
+- 同语句多动作、表改名、同语句删除多个表或解析不完整导致顺序无法确认时，不报“通过”，而是产生 `rollback.foreign_key_unconfirmed`（解析降级时严重级别与置信度同步下调）。
 - down 中出现 up 未涉及的对象或额外破坏性操作时给出警告。
 - up 中的 DROP TABLE / DROP COLUMN / TRUNCATE 被记录为不可逆变更；未确认时阻断。
 - 人工确认可写在 up 文件注释中：
@@ -295,7 +301,7 @@ baseline 文件记录文件路径、版本、方向与 SHA-256。后续运行会
 pytest -q
 ```
 
-共 70 个用例，覆盖文件发现、SQL 切分/解析/降级、版本链/baseline、规则与覆盖、回滚配对、幂等评分、豁免、差异、SQLite 台账、三种报告、CLI/demo、确定性与项目约束。测试全部离线，使用 `tmp_path`，不需要数据库或网络。
+共 88 个用例，覆盖文件发现、SQL 切分/解析/降级、版本链/baseline、规则与覆盖、回滚配对、外键依赖顺序、幂等评分、豁免、差异、SQLite 台账、三种报告、CLI/demo、确定性与项目约束。测试全部离线，使用 `tmp_path`，不需要数据库或网络。
 
 ## 12. 已知限制
 

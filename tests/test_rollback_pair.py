@@ -86,3 +86,30 @@ def test_pairing_can_be_disabled(tmp_path: Path):
         "DROP TABLE IF EXISTS demo_x;", "CREATE TABLE demo_x (id INT);"
     ), pairing={"check_rollback": False})
     assert findings == [] and result["enabled"] is False
+
+def test_pair_report_carries_foreign_key_order_section(tmp_path: Path):
+    _, result = rollback(tmp_path, pair_files(
+        "CREATE TABLE IF NOT EXISTS demo_x (id INT);", "DROP TABLE IF EXISTS demo_x;"
+    ))
+    section = result["pairs"][0]["foreign_key_order"]
+    assert section["version"] == 1 and section["status"] == "ok"
+    assert section["edges"] == [] and section["unconfirmed"] == []
+    assert section["order_findings"] == [] and section["unconfirmed_findings"] == []
+
+def test_foreign_key_blocker_flows_through_pair_findings_and_status(tmp_path: Path):
+    findings, result = rollback(tmp_path, {
+        "0001_fk.up.sql": (
+            "CREATE TABLE parent (id INT PRIMARY KEY);\n"
+            "CREATE TABLE child (id INT, pid INT REFERENCES parent(id));\n"
+        ),
+        "0001_fk.down.sql": "DROP TABLE parent;\nDROP TABLE child;\n",
+    })
+    blocker = next(item for item in findings if item.rule_id == "rollback.foreign_key_order")
+    pair = result["pairs"][0]
+    assert pair["status"] == "foreign_key_order"
+    assert blocker.fingerprint in pair["foreign_key_order"]["order_findings"]
+    edge = pair["foreign_key_order"]["edges"][0]
+    assert set(edge) == {
+        "constraint", "source_table", "referenced_table",
+        "defined_file", "defined_seq", "live",
+    }

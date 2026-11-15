@@ -90,6 +90,28 @@ def render_markdown(outcome: AuditOutcome) -> str:
                     f"{_cell(pair['status'])} | {_cell(pair.get('evidence_source', ''))} | "
                     f"{_cell(', '.join(pair.get('missing_objects', [])))} |"
                 )
+            fk_pairs = [
+                pair for pair in pairs
+                if pair.get("foreign_key_order") and pair["foreign_key_order"]["status"] != "ok"
+            ]
+            if fk_pairs:
+                lines.extend(["", "### 外键依赖顺序", ""])
+                for pair in fk_pairs:
+                    section = pair["foreign_key_order"]
+                    lines.append(
+                        f"- 版本 {section['version']}：`{_cell(section['status'])}`"
+                    )
+                    for edge in section.get("edges", [])[:6]:
+                        lines.append(
+                            f"  - 边 `{_cell(edge['constraint'])}`："
+                            f"{_cell(edge['source_table'])} -> {_cell(edge['referenced_table'])}"
+                            f"（定义于 `{_cell(edge['defined_file'])}` 语句 {edge['defined_seq']}）"
+                        )
+                    for note in section.get("unconfirmed", [])[:4]:
+                        lines.append(
+                            f"  - 未确认：`{_cell(note['file'])}` 语句 {note['statement_seq']} "
+                            f"{_cell(note['reason'])}"
+                        )
         else:
             lines.append("没有可核验的 up/down 配对。")
     for notice in outcome.rollback.get("notices", []):

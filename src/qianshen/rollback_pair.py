@@ -4,9 +4,10 @@ import re
 from collections import defaultdict
 from typing import Any
 from .config import Config
+from .fk_order import check_foreign_key_order
 from .models import FileInfo, Finding, StatementInfo, make_finding
 from .sql_split import strip_comments
-from .util import QianshenError, downgrade_severity, path_matches, truncate
+from .util import QianshenError, path_matches, severity_for_source
 DESTRUCTIVE = {"drop_table", "drop_column", "truncate"}
 APPROVAL_RE = re.compile(
     r"--\s*qianshen:\s*irreversible\s+approved-reason=\"([^\"]+)\"", re.IGNORECASE
@@ -71,11 +72,6 @@ def _covered(up_key: tuple[str, str], down_keys: set[tuple[str, str]]) -> bool:
 def _source(statements: list[StatementInfo]) -> str:
     return "token" if any(not stmt.parse_ok for stmt in statements) else "ast"
 
-def _severity_for(source: str, severity: str) -> tuple[str, str]:
-    if source == "token":
-        return downgrade_severity(severity), "low"
-    return severity, "high"
-
 def _approved(file: FileInfo, config: Config) -> tuple[bool, str]:
     match = APPROVAL_RE.search(file.text)
     if match:
@@ -101,7 +97,7 @@ def _finding(
     direction: str, object_name: str, evidence: str, suggestion: str,
     source: str, stmt: StatementInfo | None, detail: str,
 ) -> Finding:
-    effective, confidence = _severity_for(source, severity)
+    effective, confidence = severity_for_source(source, severity)
     return make_finding(
         rule_id=rule_id, title=title, severity=effective, category="rollback",
         file=file_rel, version=version, direction=direction, object_name=object_name,
@@ -126,17 +122,20 @@ def check_rollback_pairs(
     if not up_files:
         message = "当前输入没有 up/down 成对文件；单文件模式不执行回滚配对检查。"
         return [], {"enabled": True, "pairs": [], "notices": [message]}
-    findings: list[Finding] = []
+    fk_findings, fk_results = check_foreign_key_order(up_files, down_files, by_file)
+    findings: list[Finding] = list(fk_findings)
     pairs: list[dict[str, Any]] = []
     for version in sorted(up_files):
         up = up_files[version]
         down = down_files.get(version)
         up_statements = by_file.get(up.rel_path, [])
+        fk_result = fk_results.get(version)
         pair: dict[str, Any] = {
             "version": version, "up": up.rel_path, "down": down.rel_path if down else None,
             "status": "ok", "evidence_source": "ast", "up_objects": [],
             "down_objects": [], "missing_objects": [], "extra_objects": [],
             "irreversible_changes": [], "findings": [],
+            "foreign_key_order": fk_result.to_dict() if fk_result is not None else None,
         }
         if down is None:
             finding = _finding(
@@ -245,6 +244,9 @@ def check_rollback_pairs(
             pair["status"] = "object_mismatch"
         elif pair["status"] == "ok" and pair["findings"]:
             pair["status"] = "warnings"
+        if fk_result is not None and fk_result.status.startswith("foreign_key"):
+            if fk_result.status == "foreign_key_order" or pair["status"] == "ok":
+                pair["status"] = fk_result.status
         pairs.append(pair)
     counts = {
         "pairs": len(pairs),

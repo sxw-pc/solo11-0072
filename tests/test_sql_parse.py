@@ -99,3 +99,48 @@ def test_invalid_shape_falls_back_without_raising():
     )
     assert statement.parse_ok is False
     assert statement.parse_warning
+
+def test_create_table_extracts_inline_and_table_level_foreign_keys():
+    statement, _ = first(
+        "CREATE TABLE child (id INT, pid INT REFERENCES parent(id), "
+        "CONSTRAINT fk_c FOREIGN KEY (pid) REFERENCES parent(id));"
+    )
+    edges = statement.attrs["foreign_keys"]
+    assert [edge["referenced_table"] for edge in edges] == ["parent", "parent"]
+    inline, named = edges
+    assert inline["named"] is False and inline["source_table"] == "child"
+    assert inline["constraint"].startswith("__anon_fk_")
+    assert inline["defined_in"] == "inline_reference"
+    assert named["constraint"] == "fk_c" and named["named"] is True
+    assert named["columns"] == ["pid"]
+    assert named["defined_in"] == "table_constraint"
+
+def test_alter_table_extracts_add_and_drop_constraint_lists():
+    added, _ = first(
+        "ALTER TABLE child ADD CONSTRAINT fk_cp "
+        "FOREIGN KEY (pid) REFERENCES parent(id) ON DELETE CASCADE;"
+    )
+    assert added.actions == ["add_constraint"]
+    edge = added.attrs["foreign_keys"][0]
+    assert edge["constraint"] == "fk_cp"
+    assert edge["source_table"] == "child" and edge["referenced_table"] == "parent"
+    assert edge["defined_in"] == "add_constraint"
+    dropped, _ = first("ALTER TABLE child DROP CONSTRAINT fk_cp;")
+    assert dropped.attrs["dropped_constraints"] == ["fk_cp"]
+    assert dropped.attrs["dropped_constraint"] == "fk_cp"  # 旧标量字段保持兼容
+
+def test_alter_table_multi_action_is_flagged_and_constraints_kept():
+    statement, _ = first(
+        "ALTER TABLE child DROP CONSTRAINT fk_old, "
+        "ADD CONSTRAINT fk_new FOREIGN KEY (a) REFERENCES p2(id);"
+    )
+    assert statement.attrs["multi_action"] is True
+    assert statement.attrs["dropped_constraints"] == ["fk_old"]
+    assert statement.attrs["foreign_keys"][0]["constraint"] == "fk_new"
+
+def test_self_referencing_foreign_key_is_extracted():
+    statement, _ = first(
+        "CREATE TABLE node (id INT PRIMARY KEY, parent_id INT REFERENCES node(id));"
+    )
+    edge = statement.attrs["foreign_keys"][0]
+    assert edge["source_table"] == "node" and edge["referenced_table"] == "node"

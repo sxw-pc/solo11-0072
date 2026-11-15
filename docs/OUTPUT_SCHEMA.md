@@ -93,7 +93,34 @@
 }
 ```
 
-`status` 取值：`ok`、`missing_down`、`empty_down`、`object_mismatch`、`irreversible`、`warnings`。`evidence_source` 为 `ast`、`token` 或 `none`。每个不可逆变更条目带有 `marker: "irreversible_change"`，并记录 `approved` 与 `approved_reason`；标记只影响分类与提示，不跳过其他检查。
+`status` 取值：`ok`、`missing_down`、`empty_down`、`object_mismatch`、`irreversible`、`warnings`、`foreign_key_order`、`foreign_key_unconfirmed`。`evidence_source` 为 `ast`、`token` 或 `none`。每个不可逆变更条目带有 `marker: "irreversible_change"`，并记录 `approved` 与 `approved_reason`；标记只影响分类与提示，不跳过其他检查。
+
+每个配对还包含 `foreign_key_order` 外键顺序审查块：
+
+```json
+{
+  "version": 1,
+  "status": "foreign_key_order",
+  "edges": [
+    {
+      "constraint": "fk_child_parent",
+      "source_table": "child",
+      "referenced_table": "parent",
+      "defined_file": "0001_x.up.sql",
+      "defined_seq": 2,
+      "live": true
+    }
+  ],
+  "unconfirmed": [],
+  "order_findings": ["qf-…"],
+  "unconfirmed_findings": []
+}
+```
+
+- `edges` 记录本版本 up 识别到的外键边（CREATE TABLE 内联 REFERENCES、表级 FOREIGN KEY 或 ALTER TABLE ADD CONSTRAINT），无显式约束名时使用 `__anon_fk_` 前缀的合成名；`live` 表示到当前版本为止该约束是否仍然存在。
+- 审查规则：up 中被引用表（父表）必须先于依赖表（子表）创建；down 中依赖表必须先于被引用表删除。违反时产生 `rollback.foreign_key_order` 阻断发现，证据携带依赖边与父/子表两条语句的文件与行号。
+- 自引用外键与无关表不产生阻断；后续版本已经 DROP CONSTRAINT 的外键不会永久阻断更早版本的父表删除（down 按版本降序模拟真实回滚顺序）。
+- 同一语句删除多个表、同语句多动作、表改名或解析降级导致顺序无法确认时，不宣称通过，而是产生 `rollback.foreign_key_unconfirmed`（token 来源下降级为 info / low confidence），条目记录在 `unconfirmed` 中。
 
 `input.version_chain.expected` 按版本号列出已发现的 `directions`，与 `manifest` 一起构成确定性的期望清单和文件指纹清单。
 

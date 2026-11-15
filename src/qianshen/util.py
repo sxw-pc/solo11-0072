@@ -68,6 +68,12 @@ def downgrade_severity(severity: str) -> str:
         return "info"
     return severity
 
+def severity_for_source(source: str, severity: str) -> tuple[str, str]:
+    """token 降级来源的发现降低一级严重级别并标记低置信度。"""
+    if source == "token":
+        return downgrade_severity(severity), "low"
+    return severity, "high"
+
 def parse_iso_datetime(value: str) -> datetime:
     text = (value or "").strip()
     if not text:
