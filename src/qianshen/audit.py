@@ -4,6 +4,7 @@ import shlex
 import sqlite3
 from pathlib import Path
 from . import __version__
+from .cache import AuditCache
 from .config import Config
 from .diffing import compute_diff
 from .discovery import discover
@@ -42,7 +43,8 @@ def _exit_code(findings: list, fail_on: str) -> int:
 
 def run_audit(config: Config) -> AuditOutcome:
     files, discovery_errors = discover(config)
-    statements, parse_warnings = parse_all(files, config.dialect)
+    cache = AuditCache.open(config)
+    statements, parse_warnings = parse_all(files, config.dialect, cache=cache)
     version_findings, version_result = check_version_chain(files, config)
     rules_bundle = load_rules(config)
     rule_findings = evaluate_rules(rules_bundle, files, statements, config)
@@ -75,30 +77,16 @@ def run_audit(config: Config) -> AuditOutcome:
     if len(files) and not statements:
         notices.append("未从输入文件中解析出语句，请检查文件内容。")
     outcome = AuditOutcome(
-        run_id=run_id,
-        started_at=config.clock,
-        ended_at=config.clock,
-        config_digest=config.config_digest,
-        rules_sha256=rules_bundle.sha256,
-        input_summary=input_summary,
-        files=files,
-        statements=statements,
-        findings=findings,
-        exempted=hits,
-        expired_exemptions=expired,
-        parse_warnings=parse_warnings,
-        discovery_errors=discovery_errors,
-        version_result=version_result,
-        rollback=rollback_result,
-        idempotency=idempotency,
-        diff=diff,
-        rule_snapshots=rules_bundle.snapshots,
-        exit_code=exit_code,
-        conclusion=conclusion,
-        fail_on=config.fail_on,
-        dialect=config.dialect,
-        config_summary=config.summary(),
-        reproduce_command=_reproduce(config),
+        run_id=run_id, started_at=config.clock, ended_at=config.clock,
+        config_digest=config.config_digest, rules_sha256=rules_bundle.sha256,
+        input_summary=input_summary, files=files, statements=statements,
+        findings=findings, exempted=hits, expired_exemptions=expired,
+        parse_warnings=parse_warnings, discovery_errors=discovery_errors,
+        version_result=version_result, rollback=rollback_result,
+        idempotency=idempotency, diff=diff,
+        rule_snapshots=rules_bundle.snapshots, exit_code=exit_code,
+        conclusion=conclusion, fail_on=config.fail_on, dialect=config.dialect,
+        config_summary=config.summary(), reproduce_command=_reproduce(config),
         notices=notices,
     )
     try:

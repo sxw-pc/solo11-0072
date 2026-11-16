@@ -15,10 +15,7 @@ def _cell(value: Any) -> str:
     return str(value if value is not None else "").replace("|", "\\|").replace("\n", " ")
 
 def _finding_table(findings: list[Any]) -> list[str]:
-    lines = [
-        "| 严重级别 | 规则 | 位置 | 对象 | 证据 |",
-        "|---|---|---|---|---|",
-    ]
+    lines = ["| 严重级别 | 规则 | 位置 | 对象 | 证据 |", "|---|---|---|---|---|"]
     for finding in findings:
         location = f"{finding.file}:{finding.line_start}"
         lines.append(
@@ -31,17 +28,14 @@ def render_markdown(outcome: AuditOutcome) -> str:
     active = sorted_active(outcome)
     counts = outcome.severity_counts()
     lines: list[str] = [
-        f"# {TOOL_TITLE}评审报告",
-        "",
+        f"# {TOOL_TITLE}评审报告", "",
         f"- 结论：**{CONCLUSIONS.get(outcome.conclusion, outcome.conclusion)}**",
         f"- 运行 ID：`{outcome.run_id}`",
         f"- 时钟：`{outcome.started_at}`",
         f"- 方言：`{outcome.dialect}`；退出阈值：`{outcome.fail_on}`；退出码：`{outcome.exit_code}`",
         f"- 输入：`{outcome.input_summary.get('root', '')}`；文件 {len(outcome.files)} 个；语句 {len(outcome.statements)} 条",
         f"- 工具版本：`{__version__}`；规则集指纹：`{outcome.rules_sha256[:16]}`",
-        "",
-        "## 阻断项",
-        "",
+        "", "## 阻断项", "",
     ]
     blockers = [item for item in active if item.severity == "blocker"]
     if blockers:
@@ -49,18 +43,14 @@ def render_markdown(outcome: AuditOutcome) -> str:
     else:
         lines.append("无阻断级发现。")
     lines.extend([
-        "",
-        "## 统计汇总",
-        "",
+        "", "## 统计汇总", "",
         f"- blocker：{counts.get('blocker', 0)}",
         f"- warning：{counts.get('warning', 0)}",
         f"- info：{counts.get('info', 0)}",
         f"- 已豁免：{len(outcome.exempted)}",
         f"- 过期豁免：{len(outcome.expired_exemptions)}",
         f"- 解析降级警告：{len(outcome.parse_warnings)}",
-        "",
-        "### 按类别",
-        "",
+        "", "### 按类别", "",
     ])
     categories: dict[str, int] = {}
     for finding in active:
@@ -109,10 +99,7 @@ def render_markdown(outcome: AuditOutcome) -> str:
         lines.append("- 低分文件：" + ", ".join(f"`{item['file']}`({item['score']})" for item in low))
     lines.extend(["", "## 豁免说明", ""])
     if outcome.exempted:
-        lines.extend([
-            "| 豁免 ID | 规则 | 文件 | 原因 | 到期日 |",
-            "|---|---|---|---|---|",
-        ])
+        lines.extend(["| 豁免 ID | 规则 | 文件 | 原因 | 到期日 |", "|---|---|---|---|---|"])
         for hit in outcome.exempted:
             item = hit.finding
             lines.append(
@@ -151,13 +138,9 @@ def render_markdown(outcome: AuditOutcome) -> str:
         for notice in outcome.notices:
             lines.append(f"- {notice}")
     lines.extend([
-        "",
-        "## 复现命令",
-        "",
-        "```bash",
+        "", "## 复现命令", "", "```bash",
         outcome.reproduce_command,
-        "```",
-        "",
+        "```", "",
         "> 报告仅包含截断证据与定位信息，不复制完整 SQL 原文。",
         "",
     ])

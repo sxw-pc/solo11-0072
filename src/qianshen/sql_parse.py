@@ -1,5 +1,6 @@
 """SQL 语句分类：sqlglot AST 为主，解析失败时降级到保守 token 结果。"""
 from __future__ import annotations
+import copy
 import re
 from typing import Any
 import sqlglot
@@ -7,7 +8,7 @@ from sqlglot import ErrorLevel, exp
 from .models import FileInfo, StatementInfo
 from .sql_fallback import token_classify
 from .sql_split import split_sql, strip_comments
-from .type_compare import annotate_type_changes, descriptor
+from .type_compare import annotate_type_changes, annotate_type_changes_incremental, descriptor
 from .util import sha256_text, truncate
 DDL_KINDS = {
     "create_table", "alter_table", "alter_table_add_column", "alter_table_drop_column",
@@ -27,10 +28,8 @@ def _column_flags(column: exp.ColumnDef) -> tuple[bool, bool]:
 def _column_record(column: exp.ColumnDef) -> dict[str, Any]:
     not_null, has_default = _column_flags(column)
     return {
-        "name": column.name,
-        "type": descriptor(column.args.get("kind")),
-        "not_null": not_null,
-        "has_default": has_default,
+        "name": column.name, "type": descriptor(column.args.get("kind")),
+        "not_null": not_null, "has_default": has_default,
     }
 
 def _table_name(node: exp.Expression | None) -> str:
@@ -191,57 +190,104 @@ def parse_statement(
     if not parse_warning and not parse_ok:
         parse_warning = "unsupported_statement_form"
     return StatementInfo(
-        file_rel=file.rel_path,
-        file_sha256=file.sha256,
-        version=file.version,
-        direction=file.direction,
-        seq=seq,
-        start_line=start_line,
-        end_line=end_line,
-        kind=kind,
-        ast_kind=ast_kind,
-        objects=sorted(set(objects)),
+        file_rel=file.rel_path, file_sha256=file.sha256, version=file.version,
+        direction=file.direction, seq=seq, start_line=start_line, end_line=end_line,
+        kind=kind, ast_kind=ast_kind, objects=sorted(set(objects)),
         actions=list(attrs.get("actions", [])),
-        is_ddl=kind in DDL_KINDS,
-        is_dml=kind in ("insert", "update", "delete"),
+        is_ddl=kind in DDL_KINDS, is_dml=kind in ("insert", "update", "delete"),
         is_transaction=kind in ("begin", "commit", "rollback"),
-        summary=truncate(source, 180),
-        sha256=sha256_text(raw.strip()),
-        parse_ok=parse_ok,
-        parse_warning=parse_warning,
-        attrs=attrs,
-        raw=raw,
+        summary=truncate(source, 180), sha256=sha256_text(raw.strip()),
+        parse_ok=parse_ok, parse_warning=parse_warning, attrs=attrs, raw=raw,
     )
+
+def _parse_warnings(file: FileInfo, statements: list[StatementInfo]) -> list[dict[str, Any]]:
+    return [
+        {
+            "stage": "parse", "file": file.rel_path, "line": statement.start_line,
+            "statement_seq": statement.seq, "code": "parse_fallback",
+            "message": statement.parse_warning or "parse fallback",
+        }
+        for statement in statements
+        if not statement.parse_ok
+    ]
 
 def parse_file(file: FileInfo, dialect: str) -> tuple[list[StatementInfo], list[dict[str, Any]]]:
     statements: list[StatementInfo] = []
-    warnings: list[dict[str, Any]] = []
     for index, (raw, start_line, end_line) in enumerate(split_sql(file.text), start=1):
-        statement = parse_statement(
+        statements.append(parse_statement(
             raw, seq=index, start_line=start_line, end_line=end_line, file=file, dialect=dialect
-        )
-        statements.append(statement)
-        if not statement.parse_ok:
-            warnings.append(
-                {
-                    "stage": "parse",
-                    "file": file.rel_path,
-                    "line": start_line,
-                    "statement_seq": index,
-                    "code": "parse_fallback",
-                    "message": statement.parse_warning or "parse fallback",
-                }
-            )
+        ))
+    return statements, _parse_warnings(file, statements)
+
+def _statement_payload(statement: StatementInfo) -> dict[str, Any]:
+    """中性解析事实：只含与文件文本和方言直接相关的字段，不含跨文件标注。"""
+    return {
+        "seq": statement.seq, "start_line": statement.start_line,
+        "end_line": statement.end_line, "kind": statement.kind,
+        "ast_kind": statement.ast_kind, "objects": list(statement.objects),
+        "actions": list(statement.actions), "is_ddl": statement.is_ddl,
+        "is_dml": statement.is_dml, "is_transaction": statement.is_transaction,
+        "summary": statement.summary, "sha256": statement.sha256,
+        "parse_ok": statement.parse_ok, "parse_warning": statement.parse_warning,
+        "attrs": statement.attrs, "raw": statement.raw,
+    }
+
+def _statement_from_payload(item: dict[str, Any], file: FileInfo) -> StatementInfo:
+    """以本轮 FileInfo 重新绑定缓存的中性解析结果。"""
+    if not isinstance(item, dict) or not isinstance(item.get("attrs"), dict):
+        raise ValueError("缓存语句结构无效")
+    warning = item["parse_warning"]
+    statement = StatementInfo(
+        file_rel=file.rel_path, file_sha256=file.sha256, version=file.version,
+        direction=file.direction, seq=int(item["seq"]),
+        start_line=int(item["start_line"]), end_line=int(item["end_line"]),
+        kind=str(item["kind"]), ast_kind=str(item["ast_kind"]),
+        objects=[str(value) for value in item["objects"]],
+        actions=[str(value) for value in item["actions"]],
+        is_ddl=bool(item["is_ddl"]), is_dml=bool(item["is_dml"]),
+        is_transaction=bool(item["is_transaction"]),
+        summary=str(item["summary"]), sha256=str(item["sha256"]),
+        parse_ok=bool(item["parse_ok"]),
+        parse_warning=None if warning is None else str(warning),
+        attrs=copy.deepcopy(item["attrs"]), raw=str(item["raw"]),
+    )
+    if sha256_text(statement.raw.strip()) != statement.sha256:
+        raise ValueError("缓存条目与语句内容摘要不一致")
+    return statement
+
+def _parse_file_cached(
+    file: FileInfo, dialect: str, cache: Any | None
+) -> tuple[list[StatementInfo], list[dict[str, Any]]]:
+    """缓存命中时跳过 split_sql 与方言解析；失败一律退回全量解析。"""
+    if cache is not None:
+        payload = cache.parse.load(file)
+        if payload is not None:
+            try:
+                statements = [
+                    _statement_from_payload(item, file) for item in payload["statements"]
+                ]
+            except (KeyError, TypeError, ValueError, AttributeError):
+                statements = None  # 缓存损坏：按未命中处理
+            if statements is not None:
+                return statements, _parse_warnings(file, statements)
+    statements, warnings = parse_file(file, dialect)
+    if cache is not None:
+        cache.parse.store(file, [_statement_payload(statement) for statement in statements])
     return statements, warnings
 
 def parse_all(
-    files: list[FileInfo], dialect: str
+    files: list[FileInfo], dialect: str, cache: Any | None = None
 ) -> tuple[list[StatementInfo], list[dict[str, Any]]]:
     all_statements: list[StatementInfo] = []
     all_warnings: list[dict[str, Any]] = []
     for file in sorted(files, key=lambda item: item.rel_path):
-        statements, warnings = parse_file(file, dialect)
+        statements, warnings = _parse_file_cached(file, dialect, cache)
         all_statements.extend(statements)
         all_warnings.extend(warnings)
-    annotate_type_changes(all_statements)
+    if cache is not None:
+        # 跨文件类型推演每轮都执行；检查点只在输入身份完整一致时复用
+        annotate_type_changes_incremental(all_statements, cache.state, dialect)
+        cache.flush()
+    else:
+        annotate_type_changes(all_statements)
     return all_statements, all_warnings

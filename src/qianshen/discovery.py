@@ -80,28 +80,18 @@ def discover(config: Config) -> tuple[list[FileInfo], list[dict[str, object]]]:
             try:
                 data = path.read_bytes()
             except OSError as exc:
-                errors.append(
-                    {
-                        "stage": "discovery",
-                        "file": rel_path,
-                        "line": 0,
-                        "code": "read_error",
-                        "message": str(exc)[:180],
-                    }
-                )
+                errors.append({
+                    "stage": "discovery", "file": rel_path, "line": 0,
+                    "code": "read_error", "message": str(exc)[:180],
+                })
                 data = b""
             try:
                 text = data.decode("utf-8")
             except UnicodeDecodeError as exc:
-                errors.append(
-                    {
-                        "stage": "discovery",
-                        "file": rel_path,
-                        "line": 0,
-                        "code": "decode_error",
-                        "message": f"UTF-8 解码失败: {exc.reason}",
-                    }
-                )
+                errors.append({
+                    "stage": "discovery", "file": rel_path, "line": 0,
+                    "code": "decode_error", "message": f"UTF-8 解码失败: {exc.reason}",
+                })
                 text = ""
             version, description, direction, naming_error = _parse_name(filename, config)
             read_error = next(
@@ -109,19 +99,13 @@ def discover(config: Config) -> tuple[list[FileInfo], list[dict[str, object]]]:
             )
             files.append(
                 FileInfo(
-                    path=path,
-                    rel_path=rel_path,
-                    version=version,
+                    path=path, rel_path=rel_path, version=version,
                     version_raw=str(version) if version is not None else None,
-                    description=description,
-                    direction=direction,
-                    size_bytes=len(data),
-                    line_count=_line_count(text),
+                    description=description, direction=direction,
+                    size_bytes=len(data), line_count=_line_count(text),
                     sha256=sha256_bytes(data),
                     mtime_placeholder=FIXED_MTIME_PLACEHOLDER,
-                    naming_error=naming_error,
-                    text=text,
-                    read_error=read_error,
+                    naming_error=naming_error, text=text, read_error=read_error,
                 )
             )
     files.sort(key=lambda item: item.rel_path)

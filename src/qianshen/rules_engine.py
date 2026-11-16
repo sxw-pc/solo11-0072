@@ -66,8 +66,7 @@ def load_rules(config: Config) -> RulesBundle:
             raise QianshenError(f"规则 {rule_id} 使用了未知检查: {match['check']}")
         override = config.rule_overrides.get(rule_id, {})
         rule = Rule(
-            id=rule_id,
-            title=str(item.get("title", rule_id)),
+            id=rule_id, title=str(item.get("title", rule_id)),
             severity=override.get("severity", severity),
             category=str(item.get("category", "other")),
             applies_to=_list(item.get("applies_to", ["statement"]), "applies_to"),
@@ -197,7 +196,6 @@ def _statement_finding(
         source=stmt.source, line_start=stmt.start_line, line_end=stmt.end_line,
         statement_seq=stmt.seq, confidence=confidence, detail=f"stmt:{stmt.sha256}",
     )
-
 def evaluate_rules(
     rules_bundle: RulesBundle,
     files: list[FileInfo],

@@ -35,25 +35,25 @@ class Config:
     allow_grants: bool
     irreversible_approvals: list[str]
     rule_overrides: dict[str, dict[str, Any]]
+    cache_enabled: bool
+    cache_dir: Path
     raw: dict[str, Any] = field(repr=False)
     @property
     def config_digest(self) -> str:
         stable = dict(self.raw)
+        # 缓存只是性能开关，不属于审计输入身份；开关缓存不得改变 run_id
+        stable.pop("cache", None)
         stable["_dialect"] = self.dialect
         stable["_fail_on"] = self.fail_on
         stable["_clock"] = self.clock
         return sha256_text(canonical_json(stable))
     def summary(self) -> dict[str, Any]:
         return {
-            "project": self.project,
-            "dialect": self.dialect,
-            "naming_mode": self.naming_mode,
-            "version_width": self.version_width,
-            "fail_on": self.fail_on,
-            "clock": self.clock,
+            "project": self.project, "dialect": self.dialect,
+            "naming_mode": self.naming_mode, "version_width": self.version_width,
+            "fail_on": self.fail_on, "clock": self.clock,
             "ignore": {
-                "dirs": list(self.ignore.dirs),
-                "globs": list(self.ignore.globs),
+                "dirs": list(self.ignore.dirs), "globs": list(self.ignore.globs),
                 "paths": list(self.ignore.paths),
             },
             "allow_grants": self.allow_grants,
@@ -62,7 +62,6 @@ class Config:
             "has_baseline": self.baseline_file is not None,
             "has_exemptions": self.exemptions_file is not None,
         }
-
 def _as_dict(value: Any, name: str) -> dict[str, Any]:
     if value is None:
         return {}
@@ -150,6 +149,7 @@ def load_config(
             raise QianshenError("naming.version_width 必须是 1-8 的整数")
         ignore_raw = _as_dict(raw.get("ignore"), "ignore")
         permissions = _as_dict(raw.get("permissions"), "permissions")
+        cache_raw = _as_dict(raw.get("cache"), "cache")
         fail_on = str(raw.get("fail_on", "blocker")).lower()
         if fail_on not in ALLOWED_FAIL_ON:
             raise QianshenError(f"fail_on 必须是 {', '.join(ALLOWED_FAIL_ON)}")
@@ -185,6 +185,8 @@ def load_config(
                 raw.get("irreversible_approvals"), "irreversible_approvals"
             ),
             rule_overrides=_validate_overrides(raw.get("rule_overrides")),
+            cache_enabled=_as_bool(cache_raw.get("enabled", True), "cache.enabled"),
+            cache_dir=_resolve(cache_raw.get("dir", ".qianshen/cache"), base, "cache.dir"),
             raw=raw,
         )
     except QianshenError:

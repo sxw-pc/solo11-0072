@@ -19,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--ledger", help="覆盖 SQLite 台账路径")
     audit.add_argument("--now", help="注入确定性 ISO 8601 时钟")
     audit.add_argument("--fail-on", choices=ALLOWED_FAIL_ON, help="覆盖退出阈值")
+    audit.add_argument("--no-cache", action="store_true", help="禁用本地解析与类型状态缓存")
     audit.add_argument("--quiet", action="store_true", help="不输出摘要")
     demo = subparsers.add_parser("demo", help="运行六个内置 fixture 的离线演示")
     demo.add_argument("--out", default=".qianshen-demo", help="演示输出目录")
@@ -35,6 +36,8 @@ def _run_audit(args: argparse.Namespace) -> int:
     )
     if args.fail_on:
         config = replace(config, fail_on=args.fail_on)
+    if args.no_cache:
+        config = replace(config, cache_enabled=False)
     outcome = run_audit(config)
     if not args.quiet:
         print(outcome_json(outcome))

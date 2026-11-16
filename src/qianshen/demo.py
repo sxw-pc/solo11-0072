@@ -39,19 +39,15 @@ def _write_config(
     root = _project_root()
     exemptions = root / "fixtures" / "exemptions.yml" if fixture == "migrations_exempted" else None
     config_data = {
-        "project": "qianshen-audit",
-        "version": 1,
+        "project": "qianshen-audit", "version": 1,
         "migrations_dir": _relative(root / "fixtures" / fixture, directory),
         "dialect": "postgres",
         "naming": {"mode": "auto", "version_width": 4},
         "ignore": {"dirs": source.ignore.dirs, "globs": source.ignore.globs, "paths": source.ignore.paths},
         "rules_file": _relative(root / "rules" / "default.yml", directory),
         "exemptions_file": _relative(exemptions, directory) if exemptions else None,
-        "baseline_file": None,
-        "output_dir": ".",
-        "ledger_path": "ledger.sqlite3",
-        "fail_on": "blocker",
-        "clock": now,
+        "baseline_file": None, "output_dir": ".", "ledger_path": "ledger.sqlite3",
+        "fail_on": "blocker", "clock": now,
         "large_tables": list(source.large_tables),
         "permissions": {"allow_grants": source.allow_grants},
         "pairing": {"check_rollback": True},
@@ -110,11 +106,8 @@ def run_demo(output: str | Path, *, now: str = "2026-01-01T00:00:00Z") -> dict[s
         config = load_config(config_path)
         outcome = run_audit(config)
         entries.append({
-            "name": name,
-            "fixture": fixture,
-            "description": description,
-            "run_id": outcome.run_id,
-            "conclusion": outcome.conclusion,
+            "name": name, "fixture": fixture, "description": description,
+            "run_id": outcome.run_id, "conclusion": outcome.conclusion,
             "exit_code": outcome.exit_code,
             "findings": len(outcome.active_findings),
             "exempted": len(outcome.exempted),
@@ -128,8 +121,7 @@ def run_demo(output: str | Path, *, now: str = "2026-01-01T00:00:00Z") -> dict[s
     summary = {
         "schema_version": "1.0",
         "tool": {"name": "qianshen-audit", "version": __version__},
-        "generated_at": now,
-        "fixtures": entries,
+        "generated_at": now, "fixtures": entries,
     }
     atomic_write_text(
         output_root / "demo_summary.json",

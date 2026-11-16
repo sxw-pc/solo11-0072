@@ -64,9 +64,7 @@ def _covered(up_key: tuple[str, str], down_keys: set[tuple[str, str]]) -> bool:
         return True
     kind, name = up_key
     table = name.split(".")[0]
-    if kind in ("column", "constraint", "index") and ("table", table) in down_keys:
-        return True
-    return False
+    return kind in ("column", "constraint", "index") and ("table", table) in down_keys
 
 def _source(statements: list[StatementInfo]) -> str:
     return "token" if any(not stmt.parse_ok for stmt in statements) else "ast"
@@ -95,7 +93,6 @@ def _destructive_items(statements: list[StatementInfo]) -> list[tuple[StatementI
         elif stmt.kind == "truncate" and table:
             result.append((stmt, table, "truncate"))
     return result
-
 def _finding(
     rule_id: str, title: str, severity: str, file_rel: str, version: int | None,
     direction: str, object_name: str, evidence: str, suggestion: str,
@@ -119,8 +116,9 @@ def check_rollback_pairs(
         by_file[stmt.file_rel].append(stmt)
     for items in by_file.values():
         items.sort(key=lambda item: item.seq)
-    up_files = {file.version: file for file in sorted(files, key=lambda item: item.rel_path) if file.direction == "up"}
-    down_files = {file.version: file for file in sorted(files, key=lambda item: item.rel_path) if file.direction == "down"}
+    ordered_files = sorted(files, key=lambda item: item.rel_path)
+    up_files = {file.version: file for file in ordered_files if file.direction == "up"}
+    down_files = {file.version: file for file in ordered_files if file.direction == "down"}
     if not enabled:
         return [], {"enabled": False, "pairs": [], "notices": ["回滚配对检查已由配置关闭。"]}
     if not up_files:
@@ -163,7 +161,8 @@ def check_rollback_pairs(
             )
             findings.append(finding)
             pair.update({
-                "status": "empty_down", "evidence_source": "none" if not down_statements else source,
+                "status": "empty_down",
+                "evidence_source": "none" if not down_statements else source,
                 "findings": [finding.fingerprint],
             })
             pairs.append(pair)
@@ -186,7 +185,8 @@ def check_rollback_pairs(
                 "rollback.object_mismatch", "down 未覆盖 up 的对象级变更", "blocker",
                 down.rel_path, version, "down", ", ".join(name for _, name in missing_keys[:3]),
                 evidence, "逐项核对表、列、索引、约束、视图与类型，补齐回滚覆盖。",
-                source, down_statements[0] if down_statements else None, "|".join(sorted(evidence.split())),
+                source, down_statements[0] if down_statements else None,
+                "|".join(sorted(evidence.split())),
             )
             findings.append(finding)
             pair["findings"].append(finding.fingerprint)

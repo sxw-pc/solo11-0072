@@ -10,117 +10,58 @@ from .util import canonical_json, ensure_dir
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  ended_at TEXT NOT NULL,
-  tool_version TEXT NOT NULL,
-  project TEXT NOT NULL,
-  dialect TEXT NOT NULL,
-  fail_on TEXT NOT NULL,
-  config_sha256 TEXT NOT NULL,
-  rules_sha256 TEXT NOT NULL,
-  input_sha256 TEXT NOT NULL,
-  input_dir TEXT NOT NULL,
-  conclusion TEXT NOT NULL,
-  exit_code INTEGER NOT NULL,
-  files_count INTEGER NOT NULL,
-  findings_count INTEGER NOT NULL,
-  blocking_count INTEGER NOT NULL,
+  run_id TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
+  tool_version TEXT NOT NULL, project TEXT NOT NULL, dialect TEXT NOT NULL,
+  fail_on TEXT NOT NULL, config_sha256 TEXT NOT NULL, rules_sha256 TEXT NOT NULL,
+  input_sha256 TEXT NOT NULL, input_dir TEXT NOT NULL, conclusion TEXT NOT NULL,
+  exit_code INTEGER NOT NULL, files_count INTEGER NOT NULL,
+  findings_count INTEGER NOT NULL, blocking_count INTEGER NOT NULL,
   summary_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS files (
-  run_pk INTEGER NOT NULL,
-  rel_path TEXT NOT NULL,
-  version INTEGER,
-  direction TEXT NOT NULL,
-  description TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  line_count INTEGER NOT NULL,
-  sha256 TEXT NOT NULL,
-  naming_error TEXT,
-  mtime_placeholder TEXT NOT NULL,
-  PRIMARY KEY (run_pk, rel_path)
+  run_pk INTEGER NOT NULL, rel_path TEXT NOT NULL, version INTEGER,
+  direction TEXT NOT NULL, description TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+  line_count INTEGER NOT NULL, sha256 TEXT NOT NULL, naming_error TEXT,
+  mtime_placeholder TEXT NOT NULL, PRIMARY KEY (run_pk, rel_path)
 );
 CREATE TABLE IF NOT EXISTS statements (
-  run_pk INTEGER NOT NULL,
-  file_rel TEXT NOT NULL,
-  seq INTEGER NOT NULL,
-  start_line INTEGER NOT NULL,
-  end_line INTEGER NOT NULL,
-  kind TEXT NOT NULL,
-  ast_kind TEXT NOT NULL,
-  is_ddl INTEGER NOT NULL,
-  is_dml INTEGER NOT NULL,
-  is_transaction INTEGER NOT NULL,
-  objects_json TEXT NOT NULL,
-  actions_json TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  sha256 TEXT NOT NULL,
-  parse_ok INTEGER NOT NULL,
-  parse_warning TEXT,
-  source TEXT NOT NULL,
-  attrs_json TEXT NOT NULL,
-  PRIMARY KEY (run_pk, file_rel, seq)
+  run_pk INTEGER NOT NULL, file_rel TEXT NOT NULL, seq INTEGER NOT NULL,
+  start_line INTEGER NOT NULL, end_line INTEGER NOT NULL,
+  kind TEXT NOT NULL, ast_kind TEXT NOT NULL,
+  is_ddl INTEGER NOT NULL, is_dml INTEGER NOT NULL, is_transaction INTEGER NOT NULL,
+  objects_json TEXT NOT NULL, actions_json TEXT NOT NULL,
+  summary TEXT NOT NULL, sha256 TEXT NOT NULL,
+  parse_ok INTEGER NOT NULL, parse_warning TEXT, source TEXT NOT NULL,
+  attrs_json TEXT NOT NULL, PRIMARY KEY (run_pk, file_rel, seq)
 );
 CREATE TABLE IF NOT EXISTS findings (
-  run_pk INTEGER NOT NULL,
-  fingerprint TEXT NOT NULL,
-  rule_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  category TEXT NOT NULL,
-  file_rel TEXT NOT NULL,
-  version INTEGER,
-  direction TEXT NOT NULL,
-  statement_seq INTEGER,
-  line_start INTEGER NOT NULL,
-  line_end INTEGER NOT NULL,
-  object_name TEXT NOT NULL,
-  evidence TEXT NOT NULL,
-  suggestion TEXT NOT NULL,
-  source TEXT NOT NULL,
-  confidence TEXT NOT NULL,
-  status TEXT NOT NULL,
-  exemption_id TEXT,
-  PRIMARY KEY (run_pk, fingerprint, rule_id)
+  run_pk INTEGER NOT NULL, fingerprint TEXT NOT NULL, rule_id TEXT NOT NULL,
+  title TEXT NOT NULL, severity TEXT NOT NULL, category TEXT NOT NULL,
+  file_rel TEXT NOT NULL, version INTEGER, direction TEXT NOT NULL,
+  statement_seq INTEGER, line_start INTEGER NOT NULL, line_end INTEGER NOT NULL,
+  object_name TEXT NOT NULL, evidence TEXT NOT NULL, suggestion TEXT NOT NULL,
+  source TEXT NOT NULL, confidence TEXT NOT NULL, status TEXT NOT NULL,
+  exemption_id TEXT, PRIMARY KEY (run_pk, fingerprint, rule_id)
 );
 CREATE TABLE IF NOT EXISTS rule_snapshots (
-  run_pk INTEGER NOT NULL,
-  rule_id TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  category TEXT NOT NULL,
-  enabled INTEGER NOT NULL,
-  rule_json TEXT NOT NULL,
+  run_pk INTEGER NOT NULL, rule_id TEXT NOT NULL, severity TEXT NOT NULL,
+  category TEXT NOT NULL, enabled INTEGER NOT NULL, rule_json TEXT NOT NULL,
   PRIMARY KEY (run_pk, rule_id)
 );
 CREATE TABLE IF NOT EXISTS exemptions_applied (
-  run_pk INTEGER NOT NULL,
-  exemption_id TEXT NOT NULL,
-  finding_fingerprint TEXT NOT NULL,
-  rule_id TEXT NOT NULL,
-  path_glob TEXT,
-  version INTEGER,
-  reason TEXT NOT NULL,
-  expires_on TEXT NOT NULL,
+  run_pk INTEGER NOT NULL, exemption_id TEXT NOT NULL,
+  finding_fingerprint TEXT NOT NULL, rule_id TEXT NOT NULL, path_glob TEXT,
+  version INTEGER, reason TEXT NOT NULL, expires_on TEXT NOT NULL,
   PRIMARY KEY (run_pk, exemption_id, finding_fingerprint)
 );
 CREATE TABLE IF NOT EXISTS diffs (
-  run_pk INTEGER NOT NULL,
-  category TEXT NOT NULL,
-  fingerprint TEXT NOT NULL,
-  rule_id TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  file_rel TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  PRIMARY KEY (run_pk, category, fingerprint)
+  run_pk INTEGER NOT NULL, category TEXT NOT NULL, fingerprint TEXT NOT NULL,
+  rule_id TEXT NOT NULL, severity TEXT NOT NULL, file_rel TEXT NOT NULL,
+  summary TEXT NOT NULL, PRIMARY KEY (run_pk, category, fingerprint)
 );
 CREATE TABLE IF NOT EXISTS errors (
-  run_pk INTEGER NOT NULL,
-  stage TEXT NOT NULL,
-  file_rel TEXT,
-  line INTEGER,
-  code TEXT NOT NULL,
-  message TEXT NOT NULL
+  run_pk INTEGER NOT NULL, stage TEXT NOT NULL, file_rel TEXT,
+  line INTEGER, code TEXT NOT NULL, message TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_pk);
 CREATE INDEX IF NOT EXISTS idx_runs_run_id ON runs(run_id);
@@ -150,8 +91,7 @@ def previous_findings(path: Path, exclude_run_id: str | None = None) -> dict[str
             "WHERE run_pk = ? ORDER BY fingerprint, rule_id", (row["id"],)
         ).fetchall()
         return {
-            "run_pk": row["id"],
-            "run_id": row["run_id"],
+            "run_pk": row["id"], "run_id": row["run_id"],
             "findings": [dict(item) for item in items],
         }
     finally:
@@ -176,10 +116,8 @@ def _insert_findings(connection: sqlite3.Connection, run_pk: int, outcome: Audit
 def write_run(outcome: AuditOutcome, path: Path) -> int:
     counts = outcome.severity_counts()
     summary = {
-        "severity_counts": counts,
-        "findings_total": len(outcome.findings),
-        "exempted": len(outcome.exempted),
-        "version": outcome.version_result,
+        "severity_counts": counts, "findings_total": len(outcome.findings),
+        "exempted": len(outcome.exempted), "version": outcome.version_result,
         "diff": outcome.diff.get("summary", {}),
         "idempotency_score": outcome.idempotency.get("score"),
     }
@@ -244,8 +182,7 @@ def write_run(outcome: AuditOutcome, path: Path) -> int:
                     (
                         run_pk, hit.exemption.id, hit.finding.fingerprint,
                         hit.finding.rule_id, hit.exemption.path_glob,
-                        hit.exemption.version, hit.exemption.reason,
-                        hit.exemption.expires_on,
+                        hit.exemption.version, hit.exemption.reason, hit.exemption.expires_on,
                     )
                     for hit in outcome.exempted
                 ],
