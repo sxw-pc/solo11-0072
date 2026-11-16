@@ -32,8 +32,7 @@ def digest(value: Any) -> str:
 
 def truncate(value: str, limit: int = 180) -> str:
     text = re.sub(r"\s+", " ", value or "").strip()
-    if len(text) <= limit:
-        return text
+    if len(text) <= limit: return text
     return text[: limit - 1].rstrip() + "…"
 
 def normalize_rel(value: str | Path) -> str:
@@ -62,21 +61,16 @@ def worse_severity(left: str, right: str) -> str:
     return left if severity_rank(left) >= severity_rank(right) else right
 
 def downgrade_severity(severity: str) -> str:
-    if severity == "blocker":
-        return "warning"
-    if severity == "warning":
-        return "info"
+    if severity == "blocker": return "warning"
+    if severity == "warning": return "info"
     return severity
 
 def parse_iso_datetime(value: str) -> datetime:
     text = (value or "").strip()
-    if not text:
-        raise ValueError("时钟字段为空")
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
+    if not text: raise ValueError("时钟字段为空")
+    if text.endswith("Z"): text = text[:-1] + "+00:00"
     parsed = datetime.fromisoformat(text)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None: parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
 def parse_iso_date(value: str) -> date:

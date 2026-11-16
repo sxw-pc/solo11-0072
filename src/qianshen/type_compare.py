@@ -26,69 +26,50 @@ def _params(dtype: exp.DataType) -> list[int]:
     return values
 
 def descriptor(dtype: exp.DataType | None) -> dict[str, Any] | None:
-    if dtype is None:
-        return None
+    if dtype is None: return None
     raw = dtype.sql().lower()
     name = dtype.this.name.lower()
     params = _params(dtype)
-    length = None
-    precision = None
-    scale = None
+    length = precision = scale = None
     if name in STRING_TYPES:
         family = "string"
-        if name not in TEXT_TYPES and params:
-            length = params[0]
+        if name not in TEXT_TYPES and params: length = params[0]
     elif name in INT_RANK:
         family = "integer"
     elif name in FLOAT_RANK:
         family = "float"
     elif name in DECIMAL_TYPES:
         family = "decimal"
-        if params:
-            precision = params[0]
-            if len(params) > 1:
-                scale = params[1]
+        if params: precision, scale = params[0], (params[1] if len(params) > 1 else None)
     elif name in TEMPORAL_TYPES:
         family = "temporal"
     elif name in {"boolean", "bool"}:
         family = "boolean"
     elif name in {"json", "jsonb"}:
         family = "json"
-    elif name in {"uuid"}:
+    elif name == "uuid":
         family = "uuid"
     elif name in {"bytea", "blob", "binary", "varbinary"}:
         family = "binary"
-        if params:
-            length = params[0]
+        if params: length = params[0]
     else:
         family = "other"
-    return {
-        "raw": raw,
-        "family": family,
-        "name": name,
-        "length": length,
-        "precision": precision,
-        "scale": scale,
-        "rank": INT_RANK.get(name) or FLOAT_RANK.get(name),
-    }
+    return {"raw": raw, "family": family, "name": name, "length": length,
+            "precision": precision, "scale": scale,
+            "rank": INT_RANK.get(name) or FLOAT_RANK.get(name)}
 
 def compare_types(old: dict[str, Any] | None, new: dict[str, Any] | None) -> str:
-    if not old or not new:
-        return "unknown"
-    if old.get("raw") == new.get("raw"):
-        return "same"
+    if not old or not new: return "unknown"
+    if old.get("raw") == new.get("raw"): return "same"
     family = old.get("family")
-    if family != new.get("family"):
-        return "incompatible"
+    if family != new.get("family"): return "incompatible"
     if family in ("string", "binary"):
         old_len = old.get("length")
         new_len = new.get("length")
         old_unbounded = old.get("name") in TEXT_TYPES
         new_unbounded = new.get("name") in TEXT_TYPES
-        if new_unbounded and not old_unbounded:
-            return "widening"
-        if old_unbounded and not new_unbounded:
-            return "narrowing"
+        if new_unbounded and not old_unbounded: return "widening"
+        if old_unbounded and not new_unbounded: return "narrowing"
         if old_len is None or new_len is None:
             return "same" if old_len == new_len else ("widening" if old_len is None else "narrowing")
         return "narrowing" if new_len < old_len else ("widening" if new_len > old_len else "same")
@@ -112,12 +93,8 @@ def compare_types(old: dict[str, Any] | None, new: dict[str, Any] | None) -> str
         ):
             return "widening"
         return "unknown"
-    if family in ("temporal", "boolean", "json", "uuid"):
-        return "incompatible"
+    if family in ("temporal", "boolean", "json", "uuid"): return "incompatible"
     return "unknown"
-
-def _type_descriptor_from_value(value: exp.Expression | None) -> dict[str, Any] | None:
-    return descriptor(value) if isinstance(value, exp.DataType) else None
 
 def annotate_type_changes(statements: list[Any]) -> None:
     """按版本顺序维护轻量 schema 状态；只标注能证明的类型收窄/不兼容。"""
@@ -139,14 +116,11 @@ def annotate_type_changes(statements: list[Any]) -> None:
         elif stmt.kind.startswith("alter_table") and table:
             columns = state.setdefault(table, {})
             for column in stmt.attrs.get("added_columns", []):
-                if column.get("name"):
-                    columns[column["name"]] = column.get("type")
-            if stmt.attrs.get("dropped_column"):
-                columns.pop(str(stmt.attrs["dropped_column"]), None)
+                if column.get("name"): columns[column["name"]] = column.get("type")
+            if stmt.attrs.get("dropped_column"): columns.pop(str(stmt.attrs["dropped_column"]), None)
             if stmt.attrs.get("renamed_column"):
                 old_name, new_name = stmt.attrs["renamed_column"]
-                if old_name in columns:
-                    columns[new_name] = columns.pop(old_name)
+                if old_name in columns: columns[new_name] = columns.pop(old_name)
             if stmt.attrs.get("renamed_table"):
                 new_table = str(stmt.attrs["renamed_table"])
                 state[new_table] = state.pop(table, {})
@@ -158,8 +132,7 @@ def annotate_type_changes(statements: list[Any]) -> None:
                 relation = compare_types(old_type, new_type)
                 change["old_type"] = old_type
                 change["relation"] = relation
-                if new_type:
-                    columns[column] = new_type
+                if new_type: columns[column] = new_type
                 changes.append({"column": column, "relation": relation, "old": old_type, "new": new_type})
             if changes:
                 stmt.attrs["type_changes"] = changes

@@ -20,15 +20,12 @@ def compute_diff(findings: list[Finding], previous: dict[str, Any] | None) -> di
         category = "persistent" if finding.fingerprint in previous_active else "new"
         items.append(_item(category, finding))
     for finding in current_exempted:
-        if finding.fingerprint in previous_all and finding.fingerprint not in previous_active:
-            continue
+        if finding.fingerprint in previous_all and finding.fingerprint not in previous_active: continue
         items.append(_item("exempted", finding))
     for row in previous_rows:
-        if row.get("status") != "active":
-            continue
+        if row.get("status") != "active": continue
         fingerprint = row["fingerprint"]
-        if fingerprint in active_map or fingerprint in exempted_map:
-            continue
+        if fingerprint in active_map or fingerprint in exempted_map: continue
         items.append({
             "category": "fixed",
             "fingerprint": fingerprint,

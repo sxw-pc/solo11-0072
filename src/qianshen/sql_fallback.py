@@ -8,20 +8,25 @@ def token_classify(sql: str) -> tuple[str, list[str], dict[str, Any]]:
     text = re.sub(r"\s+", " ", strip_comments(sql)).strip()
     upper = text.upper()
     attrs: dict[str, Any] = {}
-    if re.match(r"^BEGIN\b", upper):
-        return "begin", [], attrs
-    if re.match(r"^COMMIT\b", upper):
-        return "commit", [], attrs
-    if re.match(r"^ROLLBACK\b", upper):
-        return "rollback", [], attrs
+    if re.match(r"^BEGIN\b", upper): return "begin", [], {"transaction_keyword": "begin"}
+    if re.match(r"^START\s+TRANSACTION\b", upper): return "begin", [], {"transaction_keyword": "start_transaction"}
+    if re.match(r"^COMMIT\b", upper): return "commit", [], {"transaction_keyword": "commit"}
+    if re.match(r"^ROLLBACK\b", upper): return "rollback", [], {"transaction_keyword": "rollback"}
     match = re.match(
-        r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?(TABLE|INDEX|VIEW|TYPE)\s+"
+        r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL\s+|LOCAL\s+)?TEMP(?:ORARY)?\s+)?"
+        r"(?:UNIQUE\s+)?(TABLE|INDEX|VIEW|TYPE)\s+"
         r"(?:IF\s+NOT\s+EXISTS\s+)?([\w.\"]+)",
         upper,
     )
     if match:
         kind, name = match.group(1).lower(), match.group(2).strip('"').lower()
         attrs["if_not_exists"] = "IF NOT EXISTS" in upper
+        # 即使令牌降级也必须保留临时对象标记，避免被当成普通 CREATE TABLE。
+        attrs["temporary"] = bool(re.match(
+            r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:GLOBAL\s+|LOCAL\s+)?TEMP(?:ORARY)?\s+)", upper
+        ))
+        attrs["concurrently"] = "CONCURRENTLY" in upper
+        attrs["select_into"] = bool(re.search(r"\bAS\s+SELECT\b|\bSELECT\b", upper)) if kind == "table" else False
         if kind == "index":
             target = re.search(r"\bON\s+([\w.\"]+)", upper)
             attrs["index"] = name
@@ -39,22 +44,19 @@ def token_classify(sql: str) -> tuple[str, list[str], dict[str, Any]]:
         if re.search(r"\bADD\s+COLUMN\b", rest):
             attrs["actions"] = ["add_column"]
             attrs["has_if_not_exists"] = "IF NOT EXISTS" in rest
-            attrs["added_columns"] = [
-                {
-                    "name": "",
-                    "type": None,
-                    "not_null": "NOT NULL" in rest,
-                    "has_default": "DEFAULT" in rest,
-                }
-            ]
+            attrs["added_columns"] = [{
+                "name": "", "type": None, "not_null": "NOT NULL" in rest,
+                "has_default": "DEFAULT" in rest}]
             return "alter_table_add_column", [table], attrs
         if re.search(r"\bALTER\s+COLUMN\b.*\bTYPE\b", rest):
             attrs["actions"] = ["alter_type"]
             return "alter_table_alter_type", [table], attrs
         return "alter_table", [table], attrs
-    match = re.match(r"^DROP\s+(TABLE|INDEX|VIEW)\s+(?:IF\s+EXISTS\s+)?([\w.\"]+)", upper)
+    match = re.match(r"^DROP\s+(?:TEMP(?:ORARY)?\s+)?(TABLE|INDEX|VIEW)\s+(?:IF\s+EXISTS\s+)?([\w.\"]+)", upper)
     if match:
         attrs["if_exists"] = "IF EXISTS" in upper
+        attrs["temporary"] = bool(re.match(r"^DROP\s+TEMP(?:ORARY)?\s+", upper))
+        attrs["concurrently"] = "CONCURRENTLY" in upper
         return f"drop_{match.group(1).lower()}", [match.group(2).strip('"').lower()], attrs
     match = re.match(r"^TRUNCATE\s+(?:TABLE\s+)?([\w.\"]+)", upper)
     if match:
@@ -73,6 +75,5 @@ def token_classify(sql: str) -> tuple[str, list[str], dict[str, Any]]:
         table = match.group(1).strip('"').lower()
         return "insert", [table], {"table": table, "insert_columns": [], "literal_values": 0}
     match = re.match(r"^(GRANT|REVOKE)\b", upper)
-    if match:
-        return match.group(1).lower(), [], {}
+    if match: return match.group(1).lower(), [], {}
     return "other", [], attrs

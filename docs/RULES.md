@@ -46,7 +46,12 @@ rules:
 文件级检查器：
 
 - `large_table_ddl_offline`：大表 DDL 未体现在线/分批策略。
-- `ddl_dml_in_transaction`：同一事务中出现 DDL 与 DML。
+- `ddl_dml_in_transaction`：同一事务中出现 DDL 与 DML（结构性提示，不判断方言提交语义）。
+- `tx_implicit_commit_cut`：目标方言的 DDL 在显式事务中途隐式提交，切断原子性。
+- `tx_non_rollbackable_side_effect`：语句不切断事务但副作用不可回滚（如 MySQL 临时表）。
+- `tx_forbidden_in_transaction`：语句在目标方言中禁止出现在显式事务内。
+- `tx_unclosed_transaction`：显式 BEGIN 缺少配对的 COMMIT/ROLLBACK。
+- `tx_boundary_unknown`：事务内含目标方言无法证明事务效果的语句，原子性未证。
 - `long_transaction_marker`：文件声明/呈现长事务风险标记。
 - `duplicate_object`：同一文件重复定义表、视图、类型、索引或新增列。
 - `fixed_key_insert`：INSERT 使用固定主键字面量。
@@ -68,6 +73,11 @@ rules:
 | `schema.type_incompatible` | warning | type_risk | 跨版本类型不兼容 |
 | `availability.large_table_ddl_without_online` | warning | lock_availability | 配置的大表出现 DDL |
 | `availability.ddl_dml_in_transaction` | warning | lock_availability | 同事务 DDL + DML |
+| `transaction.implicit_commit_cut` | blocker | transaction_integrity | 方言 DDL 隐式提交切断显式事务 |
+| `transaction.non_rollbackable_side_effect` | blocker | transaction_integrity | 不切断事务但不可回滚的副作用（MySQL 临时表等） |
+| `transaction.forbidden_in_transaction` | blocker | transaction_integrity | 语句禁止出现在显式事务内 |
+| `transaction.unclosed_transaction` | warning | transaction_integrity | BEGIN 缺少配对 COMMIT/ROLLBACK |
+| `transaction.boundary_unknown` | warning | transaction_integrity | 含未建模语句，事务原子性未证 |
 | `availability.long_transaction_marker` | warning | lock_availability | 长事务标记/形态 |
 | `idempotency.create_table_without_if_not_exists` | warning | reentrancy | CREATE TABLE 无 IF NOT EXISTS |
 | `idempotency.add_column_without_if_not_exists` | warning | reentrancy | ADD COLUMN 无 IF NOT EXISTS |
@@ -107,6 +117,16 @@ rule_overrides:
 5. 解析警告写入报告与台账 `errors` 表。
 
 降级的目的不是“宽容通过”，而是让无法确认的风险继续可见，同时明确证据强度。
+
+## 5.1 方言事务能力与真实提交边界
+
+不能机械地看见 `BEGIN` 就认为整批变更原子。`tx_capabilities` 按目标方言（postgres/mysql/sqlite）对每类语句显式声明五种边界效果之一：保持当前事务（keep）、执行前隐式提交（commit_before）、执行后隐式提交（commit_after）、禁止出现在显式事务（forbidden）、效果未知（unknown），并分别标注语句副作用是否可回滚。解释器把 `StatementInfo` 序列折叠成有序“有效事务段”，逐段标出显式 BEGIN/COMMIT/ROLLBACK、隐式提交切断点、切断前后已提交/待提交对象、不可回滚副作用与未闭合段。
+
+- PostgreSQL：事务型 `ALTER/CREATE/DROP/TRUNCATE` 可在单事务内随 `ROLLBACK` 撤销；但 `CREATE/DROP INDEX CONCURRENTLY` 禁止出现在事务块；临时表参与事务、可回滚。
+- MySQL：普通 DDL 在执行前隐式提交当前事务且自身不可回滚；`CREATE TABLE ... SELECT` 执行前后各提交一次；`CREATE/DROP TEMPORARY TABLE` 不隐式提交、不切断事务，但临时对象在 `ROLLBACK` 后仍存在，因此单独出具不可回滚副作用发现。
+- SQLite：DDL 具备事务性可回滚；其不支持的形态（如 TRUNCATE）标记为 unknown，不虚构原子性。
+
+对未建模语句或解析降级，解释器保留此前可证明的提交片段，仅把当前打开从事务首个 unknown 效果标记为“边界未证”；不会因为读到 `COMMIT/ROLLBACK` 就把未知前段重写成已证明原子。因此同一份 `BEGIN→UPDATE→ALTER→UPDATE→ROLLBACK` 在 PostgreSQL 下结论为整体可回滚，在 MySQL 下必须指出 `ALTER` 前的 UPDATE 已提交、末尾 ROLLBACK 无法统一撤回；两者不会被压成同一条“混有 DDL”的发现。
 
 ## 6. 误报边界
 

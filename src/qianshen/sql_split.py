@@ -130,8 +130,7 @@ def split_sql(text: str) -> list[tuple[str, int, int]]:
         cleaned = strip_comments(segment)
         leading = cleaned[: len(cleaned) - len(cleaned.lstrip())]
         body = cleaned.strip()
-        if not body or body == ";":
-            continue
+        if not body or body == ";": continue
         first_line = base_line + leading.count("\n")
         last_line = first_line + cleaned.strip().count("\n")
         results.append((segment.strip(), first_line, last_line))

@@ -35,8 +35,7 @@ def _reproduce(config: Config) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 def _exit_code(findings: list, fail_on: str) -> int:
-    if fail_on == "none":
-        return 0
+    if fail_on == "none": return 0
     threshold = severity_rank(fail_on)
     return 1 if any(severity_rank(item.severity) >= threshold for item in findings) else 0
 
@@ -51,15 +50,11 @@ def run_audit(config: Config) -> AuditOutcome:
     exemptions = load_exemptions(config)
     clock = parse_iso_datetime(config.clock)
     pre_exemption = version_findings + rule_findings + rollback_findings
-    active, hits, expired, expired_findings = apply_exemptions(
-        pre_exemption, exemptions, clock.date()
-    )
+    active, hits, expired, expired_findings = apply_exemptions(pre_exemption, exemptions, clock.date())
     findings = active + expired_findings + [hit.finding for hit in hits]
     findings.sort(key=finding_sort_key)
     input_summary = build_input_summary(files, config)
-    finding_state = canonical_json([
-        [item.fingerprint, item.status] for item in findings
-    ])
+    finding_state = canonical_json([[item.fingerprint, item.status] for item in findings])
     run_id = "qn-" + sha256_text("|".join([
         __version__, config.clock, config.config_digest, rules_bundle.sha256,
         str(input_summary["sha256"]), finding_state,
@@ -72,8 +67,7 @@ def run_audit(config: Config) -> AuditOutcome:
     exit_code = _exit_code(active, config.fail_on)
     conclusion = "blocked" if exit_code == 1 else "passed"
     notices: list[str] = list(rollback_result.get("notices", []))
-    if len(files) and not statements:
-        notices.append("未从输入文件中解析出语句，请检查文件内容。")
+    if len(files) and not statements: notices.append("未从输入文件中解析出语句，请检查文件内容。")
     outcome = AuditOutcome(
         run_id=run_id,
         started_at=config.clock,

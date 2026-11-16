@@ -21,8 +21,7 @@ FIXTURES = (
 
 def _project_root() -> Path:
     for candidate in (Path.cwd(), Path(__file__).resolve().parents[2]):
-        if (candidate / "fixtures").is_dir() and (candidate / "rules" / "default.yml").is_file():
-            return candidate
+        if (candidate / "fixtures").is_dir() and (candidate / "rules" / "default.yml").is_file(): return candidate
     raise QianshenError("无法定位 fixtures/ 与 rules/；请在项目根目录运行 demo", exit_code=2)
 
 def _relative(target: Path, base: Path) -> str:
@@ -104,8 +103,7 @@ def run_demo(output: str | Path, *, now: str = "2026-01-01T00:00:00Z") -> dict[s
     entries: list[dict[str, Any]] = []
     for name, fixture, description in FIXTURES:
         fixture_dir = root / "fixtures" / fixture
-        if not fixture_dir.is_dir():
-            raise QianshenError(f"缺少演示 fixture: {fixture}")
+        if not fixture_dir.is_dir(): raise QianshenError(f"缺少演示 fixture: {fixture}")
         config_path = _write_config(output_root, name, fixture, source, now)
         config = load_config(config_path)
         outcome = run_audit(config)
@@ -120,10 +118,8 @@ def run_demo(output: str | Path, *, now: str = "2026-01-01T00:00:00Z") -> dict[s
             "exempted": len(outcome.exempted),
             "expired_exemptions": len(outcome.expired_exemptions),
             "idempotency_score": outcome.idempotency.get("score"),
-            "outputs": [
-                f"{name}/findings.json", f"{name}/report.md",
-                f"{name}/report.html", f"{name}/ledger.sqlite3",
-            ],
+            "outputs": [f"{name}/findings.json", f"{name}/report.md",
+                        f"{name}/report.html", f"{name}/ledger.sqlite3"],
         })
     summary = {
         "schema_version": "1.0",
@@ -131,10 +127,8 @@ def run_demo(output: str | Path, *, now: str = "2026-01-01T00:00:00Z") -> dict[s
         "generated_at": now,
         "fixtures": entries,
     }
-    atomic_write_text(
-        output_root / "demo_summary.json",
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
-    )
+    atomic_write_text(output_root / "demo_summary.json",
+                      json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     atomic_write_text(output_root / "index.html", _index_html(entries, now))
     text = "\n".join([
         f"{TOOL_TITLE} demo 完成：{len(entries)} 个 fixture",

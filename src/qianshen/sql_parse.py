@@ -17,7 +17,6 @@ DDL_KINDS = {
     "drop_table", "create_index", "drop_index", "truncate", "create_view", "drop_view",
     "create_type", "alter_type",
 }
-
 def _column_flags(column: exp.ColumnDef) -> tuple[bool, bool]:
     constraints = column.args.get("constraints") or []
     not_null = any(isinstance(c.args.get("kind"), exp.NotNullColumnConstraint) for c in constraints)
@@ -26,33 +25,34 @@ def _column_flags(column: exp.ColumnDef) -> tuple[bool, bool]:
 
 def _column_record(column: exp.ColumnDef) -> dict[str, Any]:
     not_null, has_default = _column_flags(column)
-    return {
-        "name": column.name,
-        "type": descriptor(column.args.get("kind")),
-        "not_null": not_null,
-        "has_default": has_default,
-    }
+    return {"name": column.name, "type": descriptor(column.args.get("kind")),
+            "not_null": not_null, "has_default": has_default}
 
 def _table_name(node: exp.Expression | None) -> str:
-    if node is None:
-        return ""
-    if isinstance(node, exp.Schema):
-        node = node.this
-    if isinstance(node, (exp.Table, exp.Index)):
-        return node.name
+    if node is None: return ""
+    if isinstance(node, exp.Schema): node = node.this
+    if isinstance(node, (exp.Table, exp.Index)): return node.name
     return getattr(node, "name", "") or ""
+
+def _has_property(ast: exp.Create, property_type: type) -> bool:
+    return any(isinstance(item, property_type) for item in ast.args.get("properties") or [])
 
 def _classify_create(ast: exp.Create) -> tuple[str, list[str], dict[str, Any]]:
     kind_word = str(ast.args.get("kind") or "TABLE").lower()
-    attrs: dict[str, Any] = {"if_not_exists": bool(ast.args.get("exists"))}
+    attrs: dict[str, Any] = {
+        "if_not_exists": bool(ast.args.get("exists")),
+        # 事务能力表需要真实的临时对象/并发标记，不能把 TEMPORARY 当成普通 CREATE。
+        "temporary": _has_property(ast, exp.TemporaryProperty),
+        "concurrently": bool(ast.args.get("concurrently")),
+        "select_into": ast.expression is not None,
+    }
     if kind_word == "index":
         index_name = ast.this.name if isinstance(ast.this, exp.Index) else ""
         table = _table_name(ast.this.args.get("table")) if isinstance(ast.this, exp.Index) else ""
         attrs.update({"index": index_name, "table": table})
         return "create_index", [item for item in (index_name, table) if item], attrs
     table = _table_name(ast.this)
-    if table:
-        attrs["table"] = table
+    if table: attrs["table"] = table
     if kind_word == "table" and isinstance(ast.this, exp.Schema):
         attrs["columns"] = [
             _column_record(item) for item in ast.this.expressions if isinstance(item, exp.ColumnDef)
@@ -61,9 +61,7 @@ def _classify_create(ast: exp.Create) -> tuple[str, list[str], dict[str, Any]]:
 
 def _classify_alter(ast: exp.Alter) -> tuple[str, list[str], dict[str, Any]]:
     table = _table_name(ast.this)
-    attrs: dict[str, Any] = {
-        "table": table, "actions": [], "added_columns": [], "type_alterations": []
-    }
+    attrs: dict[str, Any] = {"table": table, "actions": [], "added_columns": [], "type_alterations": []}
     objects = [table] if table else []
     for action in ast.args.get("actions") or []:
         if isinstance(action, exp.ColumnDef):
@@ -76,21 +74,16 @@ def _classify_alter(ast: exp.Alter) -> tuple[str, list[str], dict[str, Any]]:
             drop_kind = str(action.args.get("kind") or "").upper()
             target = action.args.get("tables") or []
             name = target[0].name if target else ""
-            if drop_kind == "CONSTRAINT":
-                attrs["actions"].append("drop_constraint")
-                attrs["dropped_constraint"] = name
-                objects.append(f"{table}.{name}" if table else name)
-            else:
-                attrs["actions"].append("drop_column")
-                attrs["dropped_column"] = name
-                objects.append(f"{table}.{name}" if table else name)
+            action_name = "drop_constraint" if drop_kind == "CONSTRAINT" else "drop_column"
+            attrs["actions"].append(action_name)
+            attrs[action_name] = name
+            objects.append(f"{table}.{name}" if table else name)
         elif isinstance(action, exp.AlterColumn):
             column_name = action.name
             if isinstance(action.args.get("dtype"), exp.DataType):
                 attrs["actions"].append("alter_type")
                 attrs["type_alterations"].append(
-                    {"column": column_name, "type": descriptor(action.args["dtype"])}
-                )
+                    {"column": column_name, "type": descriptor(action.args["dtype"])})
                 objects.append(f"{table}.{column_name}" if table else column_name)
             elif action.args.get("default") is not None:
                 attrs["actions"].append("set_default")
@@ -124,23 +117,25 @@ def _classify_alter(ast: exp.Alter) -> tuple[str, list[str], dict[str, Any]]:
 
 def _classify_ast(ast: exp.Expression, sql: str) -> tuple[str, list[str], dict[str, Any]]:
     attrs: dict[str, Any] = {}
-    if isinstance(ast, exp.Create):
-        return _classify_create(ast)
-    if isinstance(ast, exp.Alter):
-        return _classify_alter(ast)
+    if isinstance(ast, exp.Create): return _classify_create(ast)
+    if isinstance(ast, exp.Alter): return _classify_alter(ast)
     if isinstance(ast, exp.Drop):
         kind_word = str(ast.args.get("kind") or "TABLE").lower()
         objects = [item.name for item in ast.args.get("tables") or [] if getattr(item, "name", "")]
-        return f"drop_{kind_word}", objects, {"if_exists": bool(ast.args.get("exists"))}
+        attrs = {
+            "if_exists": bool(ast.args.get("exists")),
+            # DROP TEMPORARY TABLE 在 MySQL 不触发隐式提交，必须与普通 DROP 区分。
+            "temporary": bool(ast.args.get("temporary")),
+            "concurrently": bool(ast.args.get("concurrently")),
+        }
+        return f"drop_{kind_word}", objects, attrs
     if isinstance(ast, exp.TruncateTable):
         objects = [item.name for item in ast.args.get("expressions") or [] if getattr(item, "name", "")]
         return "truncate", objects, {"table": objects[0] if objects else ""}
     if isinstance(ast, (exp.Update, exp.Delete)):
         table = _table_name(ast.this)
         kind = "update" if isinstance(ast, exp.Update) else "delete"
-        return kind, [table] if table else [], {
-            "table": table, "has_where": ast.args.get("where") is not None
-        }
+        return kind, [table] if table else [], {"table": table, "has_where": ast.args.get("where") is not None}
     if isinstance(ast, exp.Insert):
         table = _table_name(ast.this)
         columns: list[str] = []
@@ -151,11 +146,12 @@ def _classify_ast(ast: exp.Expression, sql: str) -> tuple[str, list[str], dict[s
             "table": table, "insert_columns": columns, "literal_values": len(literals)
         }
     if isinstance(ast, exp.Transaction):
-        return "begin", [], attrs
-    if isinstance(ast, exp.Commit):
-        return "commit", [], attrs
-    if isinstance(ast, exp.Rollback):
-        return "rollback", [], attrs
+        # MySQL 中 START TRANSACTION（含 BEGIN 别名）会先隐式提交当前事务，
+        # 记录真实关键字供事务解释器判断嵌套 BEGIN 的提交边界。
+        keyword = "start_transaction" if re.match(r"(?is)^\s*START\s+TRANSACTION\b", sql) else "begin"
+        return "begin", [], {"transaction_keyword": keyword}
+    if isinstance(ast, exp.Commit): return "commit", [], {"transaction_keyword": "commit"}
+    if isinstance(ast, exp.Rollback): return "rollback", [], {"transaction_keyword": "rollback"}
     if isinstance(ast, (exp.Grant, exp.Revoke)):
         securable = _table_name(ast.args.get("securable"))
         kind = "grant" if isinstance(ast, exp.Grant) else "revoke"
@@ -180,16 +176,19 @@ def parse_statement(
     if ast is not None:
         ast_kind = type(ast).__name__
         kind, objects, attrs = _classify_ast(ast, source)
-        parse_ok = kind != "other" or isinstance(ast, exp.Command)
+        # sqlglot 对无法解析的语句会降级成 generic Command：改用令牌分类，
+        # 以保留 TEMPORARY 等真实标记，而不是把它当成不可识别的 other。
         if isinstance(ast, exp.Command) and kind == "other":
+            kind, objects, attrs = token_classify(source)
             parse_ok = False
             parse_warning = "unsupported_statement_form:generic_command"
+        else:
+            parse_ok = kind != "other" or isinstance(ast, exp.Command)
     else:
         kind, objects, attrs = token_classify(source)
         parse_ok = False
         parse_warning = parse_warning or "parse_error:unknown"
-    if not parse_warning and not parse_ok:
-        parse_warning = "unsupported_statement_form"
+    if not parse_warning and not parse_ok: parse_warning = "unsupported_statement_form"
     return StatementInfo(
         file_rel=file.rel_path,
         file_sha256=file.sha256,
@@ -222,16 +221,9 @@ def parse_file(file: FileInfo, dialect: str) -> tuple[list[StatementInfo], list[
         )
         statements.append(statement)
         if not statement.parse_ok:
-            warnings.append(
-                {
-                    "stage": "parse",
-                    "file": file.rel_path,
-                    "line": start_line,
-                    "statement_seq": index,
-                    "code": "parse_fallback",
-                    "message": statement.parse_warning or "parse fallback",
-                }
-            )
+            warnings.append({"stage": "parse", "file": file.rel_path, "line": start_line,
+                             "statement_seq": index, "code": "parse_fallback",
+                             "message": statement.parse_warning or "parse fallback"})
     return statements, warnings
 
 def parse_all(

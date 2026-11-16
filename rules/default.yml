@@ -133,6 +133,56 @@ rules:
     suggestion: 拆分 DDL 与数据变更，分别验证锁持有时间与失败回退路径。
     enabled: true
 
+  - id: transaction.implicit_commit_cut
+    title: 方言隐式提交切断显式事务，ROLLBACK 无法整体撤回
+    severity: blocker
+    category: transaction_integrity
+    applies_to: [file]
+    match: {check: tx_implicit_commit_cut}
+    message: "目标方言的 DDL 在事务中途隐式提交，整批变更并非原子: {file}"
+    suggestion: 按隐式提交点拆分迁移，把可回滚 DML 与不可回滚 DDL 分离，并为已提交段设计独立补偿/重跑方案。
+    enabled: true
+
+  - id: transaction.non_rollbackable_side_effect
+    title: 事务内存在 ROLLBACK 后仍残留的不可回滚副作用
+    severity: blocker
+    category: transaction_integrity
+    applies_to: [file]
+    match: {check: tx_non_rollbackable_side_effect}
+    message: "语句不切断事务但副作用不可回滚（如 MySQL 临时表）: {object}"
+    suggestion: 将该对象的创建/删除移出显式事务或单独清理；不得把“没有隐式提交”当成“可整体回滚”。
+    enabled: true
+
+  - id: transaction.forbidden_in_transaction
+    title: 语句在目标方言中禁止出现在显式事务内
+    severity: blocker
+    category: transaction_integrity
+    applies_to: [file]
+    match: {check: tx_forbidden_in_transaction}
+    message: "目标方言禁止该语句运行在事务块中: {object}"
+    suggestion: 移除显式事务包裹或改用方言允许的等价形态（如普通 CREATE INDEX），并单独评估失败路径。
+    enabled: true
+
+  - id: transaction.unclosed_transaction
+    title: 显式事务缺少配对的 COMMIT/ROLLBACK
+    severity: warning
+    category: transaction_integrity
+    applies_to: [file]
+    match: {check: tx_unclosed_transaction}
+    message: "BEGIN 没有配对事务结束语句，失败后的提交归属不明确: {file}"
+    suggestion: 补齐显式 COMMIT/ROLLBACK；若依赖连接关闭行为，应在迁移中写明并验证失败重放路径。
+    enabled: true
+
+  - id: transaction.boundary_unknown
+    title: 存在目标方言无法证明事务效果的语句，原子性未证
+    severity: warning
+    category: transaction_integrity
+    applies_to: [file]
+    match: {check: tx_boundary_unknown}
+    message: "事务边界包含未建模语句，不能宣称可原子回滚: {file}"
+    suggestion: 拆分未知语句、改用受支持语法，或在评审记录中由人工确认目标数据库的真实提交语义。
+    enabled: true
+
   - id: availability.long_transaction_marker
     title: 显式长事务风险标记
     severity: warning

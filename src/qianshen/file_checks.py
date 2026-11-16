@@ -4,6 +4,7 @@ import re
 from typing import Any
 from .config import Config
 from .models import FileInfo, Finding, Rule, StatementInfo, make_finding
+from .tx_findings import build_tx_findings
 from .util import downgrade_severity, truncate
 ONLINE_MARKERS = ("qianshen: online", "concurrently", "algorithm=inplace", "online=on")
 
@@ -15,13 +16,10 @@ def _render(template: str, values: dict[str, Any]) -> str:
 
 def _object_for(stmt: StatementInfo) -> str:
     table = str(stmt.attrs.get("table") or "")
-    if stmt.attrs.get("dropped_column") and table:
-        return f"{table}.{stmt.attrs['dropped_column']}"
-    if table:
-        return table
+    if stmt.attrs.get("dropped_column") and table: return f"{table}.{stmt.attrs['dropped_column']}"
+    if table: return table
     for key in ("dropped_constraint", "securable", "type", "index"):
-        if stmt.attrs.get(key):
-            return str(stmt.attrs[key])
+        if stmt.attrs.get(key): return str(stmt.attrs[key])
     return stmt.objects[0] if stmt.objects else stmt.file_rel
 
 def file_check_findings(
@@ -35,10 +33,10 @@ def file_check_findings(
     results: list[Finding] = []
     def add(
         stmt: StatementInfo | None, object_name: str, evidence: str, line: int,
-        detail: str = "", source: str = "ast",
+        detail: str = "", source: str = "ast", confidence: str | None = None,
     ) -> None:
         severity = downgrade_severity(rule.severity) if source == "token" else rule.severity
-        confidence = "low" if source == "token" else "high"
+        if confidence is None: confidence = "low" if source == "token" else "high"
         local = dict(values, object=object_name, line=line, evidence=evidence)
         results.append(make_finding(
             rule_id=rule.id, title=rule.title, severity=severity, category=rule.category,
@@ -51,16 +49,11 @@ def file_check_findings(
     if check == "large_table_ddl_offline":
         for stmt in statements:
             table = str(stmt.attrs.get("table") or "")
-            if not table or table not in config.large_tables or not stmt.is_ddl:
-                continue
+            if not table or table not in config.large_tables or not stmt.is_ddl: continue
             marker = f"{file.text}\n{stmt.raw}".lower()
-            if any(item in marker for item in ONLINE_MARKERS):
-                continue
-            add(
-                stmt, table,
-                f"大表 {table} 的 DDL 未声明在线/并发策略: {truncate(stmt.summary, 110)}",
-                stmt.start_line, stmt.sha256, stmt.source,
-            )
+            if any(item in marker for item in ONLINE_MARKERS): continue
+            add(stmt, table, f"大表 {table} 的 DDL 未声明在线/并发策略: {truncate(stmt.summary, 110)}",
+                stmt.start_line, stmt.sha256, stmt.source)
     elif check == "ddl_dml_in_transaction":
         in_tx = False
         current: list[StatementInfo] = []
@@ -74,20 +67,20 @@ def file_check_findings(
                         changed = [item for item in current if item.is_ddl or item.is_dml]
                         source = "token" if any(not item.parse_ok for item in changed) else "ast"
                         begin = next((item for item in current if item.kind == "begin"), current[0])
-                        add(
-                            begin, file.rel_path,
+                        add(begin, file.rel_path,
                             f"同一事务内混合 DDL/DML，共 {len(changed)} 条变更语句",
-                            begin.start_line, begin.sha256, source,
-                        )
+                            begin.start_line, begin.sha256, source)
                     in_tx, current = False, []
+    elif check in (
+        "tx_implicit_commit_cut", "tx_non_rollbackable_side_effect",
+        "tx_forbidden_in_transaction", "tx_unclosed_transaction", "tx_boundary_unknown",
+    ):
+        build_tx_findings(rule, file, statements, config, check, add)
     elif check == "long_transaction_marker":
         for index, line in enumerate(file.text.splitlines(), start=1):
             if re.search(r"--\s*qianshen:\s*long-transaction\b", line, re.IGNORECASE):
-                add(
-                    None, file.rel_path,
-                    f"文件声明了长事务风险标记: {truncate(line, 100)}",
-                    index, f"marker:{index}:{file.sha256}",
-                )
+                add(None, file.rel_path, f"文件声明了长事务风险标记: {truncate(line, 100)}",
+                    index, f"marker:{index}:{file.sha256}")
     elif check == "duplicate_object":
         seen: dict[str, StatementInfo] = {}
         for stmt in statements:
@@ -97,43 +90,29 @@ def file_check_findings(
                 definitions.append(f"{stmt.kind}:{table}")
             elif stmt.kind == "create_index":
                 index = str(stmt.attrs.get("index") or "")
-                if index:
-                    definitions.append(f"create_index:{index}")
+                if index: definitions.append(f"create_index:{index}")
             for column in stmt.attrs.get("added_columns", []):
-                if column.get("name"):
-                    definitions.append(f"add_column:{table}.{column['name']}")
+                if column.get("name"): definitions.append(f"add_column:{table}.{column['name']}")
             for key in definitions:
                 if key in seen:
                     source = "token" if not stmt.parse_ok or not seen[key].parse_ok else "ast"
-                    add(
-                        stmt, key.split(":", 1)[1], f"同一文件重复定义对象: {key.split(':', 1)[1]}",
-                        stmt.start_line, f"{seen[key].sha256}:{stmt.sha256}", source,
-                    )
+                    add(stmt, key.split(":", 1)[1], f"同一文件重复定义对象: {key.split(':', 1)[1]}",
+                        stmt.start_line, f"{seen[key].sha256}:{stmt.sha256}", source)
                 else:
                     seen[key] = stmt
     elif check == "fixed_key_insert":
         for stmt in statements:
             columns = {str(item).lower() for item in stmt.attrs.get("insert_columns", [])}
-            if stmt.kind != "insert" or "id" not in columns:
-                continue
-            if int(stmt.attrs.get("literal_values", 0)) < len(columns):
-                continue
-            add(
-                stmt, _object_for(stmt),
-                f"固定主键写入可能重复冲突: {truncate(stmt.summary, 120)}",
-                stmt.start_line, stmt.sha256, stmt.source,
-            )
+            if stmt.kind != "insert" or "id" not in columns: continue
+            if int(stmt.attrs.get("literal_values", 0)) < len(columns): continue
+            add(stmt, _object_for(stmt), f"固定主键写入可能重复冲突: {truncate(stmt.summary, 120)}",
+                stmt.start_line, stmt.sha256, stmt.source)
     elif check == "non_idempotent_dml":
         for stmt in statements:
-            if stmt.kind != "update":
+            if stmt.kind != "update": continue
+            if not re.search(r"\bset\b[\s\S]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\1\s*[-+]", stmt.raw, re.IGNORECASE):
                 continue
-            if not re.search(
-                r"\bset\b[\s\S]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\1\s*[-+]",
-                stmt.raw, re.IGNORECASE,
-            ):
-                continue
-            add(
-                stmt, _object_for(stmt),
+            add(stmt, _object_for(stmt),
                 f"累计更新在重复执行时可能二次生效: {truncate(stmt.summary, 110)}",
                 stmt.start_line, stmt.sha256, stmt.source,
             )

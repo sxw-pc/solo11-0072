@@ -16,11 +16,7 @@ def build_report(outcome: AuditOutcome) -> dict[str, Any]:
     counts = outcome.severity_counts()
     return {
         "schema_version": SCHEMA_VERSION,
-        "tool": {
-            "name": TOOL_NAME,
-            "title": TOOL_TITLE,
-            "version": __version__,
-        },
+        "tool": {"name": TOOL_NAME, "title": TOOL_TITLE, "version": __version__},
         "run": {
             "run_id": outcome.run_id,
             "started_at": outcome.started_at,

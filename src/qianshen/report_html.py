@@ -8,11 +8,9 @@ from .models import AuditOutcome
 from .report_json import sorted_active
 from .util import atomic_write_text, truncate
 STYLE = """
-:root { --ink:#17212b; --muted:#5b6875; --line:#d8dee5; --bg:#ffffff;
-  --panel:#f5f7f9; --blocker:#9f1d2c; --warning:#8a5a00; --info:#245f8f; }
+:root { --ink:#17212b; --muted:#5b6875; --line:#d8dee5; --bg:#fff; --panel:#f5f7f9; --blocker:#9f1d2c; --warning:#8a5a00; --info:#245f8f; }
 * { box-sizing:border-box; }
-body { margin:0 auto; max-width:1180px; padding:32px 24px 64px; background:var(--bg);
-  color:var(--ink); font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; line-height:1.55; }
+body { margin:0 auto; max-width:1180px; padding:32px 24px 64px; background:var(--bg); color:var(--ink); font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; line-height:1.55; }
 h1 { font-size:28px; margin:0 0 4px; letter-spacing:-.02em; }
 h2 { font-size:20px; margin:32px 0 12px; padding-bottom:6px; border-bottom:1px solid var(--line); }
 h3 { font-size:16px; margin:20px 0 8px; }
@@ -35,39 +33,27 @@ pre { background:var(--panel); border:1px solid var(--line); border-radius:6px; 
 .note { color:var(--muted); font-size:12px; }
 ul { margin:6px 0 12px; padding-left:22px; }
 """
-CONCLUSIONS = {
-    "blocked": "阻断：存在达到退出阈值的发现",
-    "passed": "通过：没有达到退出阈值的发现",
-}
+CONCLUSIONS = {"blocked": "阻断：存在达到退出阈值的发现", "passed": "通过：没有达到退出阈值的发现"}
 
 def _e(value: Any) -> str:
     return html.escape(str(value if value is not None else ""))
 
 def _finding_rows(findings: list[Any]) -> str:
-    rows = []
-    for finding in findings:
-        rows.append(
-            "<tr>"
-            f"<td><span class=\"badge {_e(finding.severity)}\">{_e(finding.severity)}</span></td>"
-            f"<td><code>{_e(finding.rule_id)}</code></td>"
-            f"<td><code>{_e(finding.file)}:{finding.line_start}</code></td>"
-            f"<td>{_e(finding.object_name)}</td>"
-            f"<td>{_e(truncate(finding.evidence, 130))}</td>"
-            "</tr>"
-        )
-    if not rows:
-        return "<p>无活跃发现。</p>"
-    return (
-        "<table><thead><tr><th>严重级别</th><th>规则</th><th>位置</th>"
-        "<th>对象</th><th>证据</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
-    )
+    rows = ["".join((
+        "<tr>", f'<td><span class="badge {_e(f.severity)}">{_e(f.severity)}</span></td>',
+        f"<td><code>{_e(f.rule_id)}</code></td>",
+        f"<td><code>{_e(f.file)}:{f.line_start}</code></td>",
+        f"<td>{_e(f.object_name)}</td>",
+        f"<td>{_e(truncate(f.evidence, 130))}</td></tr>")) for f in findings]
+    if not rows: return "<p>无活跃发现。</p>"
+    return ("<table><thead><tr><th>严重级别</th><th>规则</th><th>位置</th><th>对象</th>"
+            "<th>证据</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
 def render_html(outcome: AuditOutcome) -> str:
     active = sorted_active(outcome)
     counts = outcome.severity_counts()
     parts = [
-        "<!doctype html>",
-        '<html lang="zh-CN"><head><meta charset="utf-8">',
+        "<!doctype html>", '<html lang="zh-CN"><head><meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         f"<title>{_e(TOOL_TITLE)}评审报告</title><style>{STYLE}</style></head><body>",
         f"<h1>{_e(TOOL_TITLE)}评审报告</h1>",
@@ -80,110 +66,77 @@ def render_html(outcome: AuditOutcome) -> str:
         f'<div class="card"><b>{len(outcome.exempted)}</b><span>已豁免</span></div>',
         f'<div class="card"><b>{len(outcome.files)}</b><span>迁移文件</span></div>',
         f'<div class="card"><b>{outcome.idempotency.get("score", 100)}</b><span>幂等性分</span></div>',
-        "</div>",
-        "<h2>运行信息</h2><ul>",
+        "</div>", "<h2>运行信息</h2><ul>",
         f"<li>方言 <code>{_e(outcome.dialect)}</code>；退出阈值 <code>{_e(outcome.fail_on)}</code>；退出码 {outcome.exit_code}</li>",
         f"<li>输入 <code>{_e(outcome.input_summary.get('root', ''))}</code>；语句 {len(outcome.statements)} 条</li>",
         f"<li>规则集指纹 <code>{_e(outcome.rules_sha256[:16])}</code>；工具版本 <code>{_e(__version__)}</code></li>",
-        "</ul>",
-        "<h2>阻断项</h2>",
-        _finding_rows([item for item in active if item.severity == "blocker"]),
-        "<h2>重点发现</h2>",
-        _finding_rows(active[:40]),
+        "</ul>", "<h2>阻断项</h2>",
+        _finding_rows([x for x in active if x.severity == "blocker"]),
+        "<h2>重点发现</h2>", _finding_rows(active[:40]),
     ]
-    if len(active) > 40:
-        parts.append(f'<p class="note">仅展示前 40 条；完整列表见 findings.json（共 {len(active)} 条）。</p>')
+    if len(active) > 40: parts.append(f'<p class="note">仅展示前 40 条；完整列表见 findings.json（共 {len(active)} 条）。</p>')
     parts.append("<h2>回滚配对</h2>")
     if not outcome.rollback.get("enabled"):
         parts.append("<p>回滚配对检查未启用。</p>")
+    elif outcome.rollback.get("pairs"):
+        rows = "".join("".join((
+            "<tr>", f"<td>{_e(p['version'])}</td><td><code>{_e(p['up'])}</code></td>",
+            f"<td><code>{_e(p.get('down') or '')}</code></td><td>{_e(p['status'])}</td>",
+            f"<td>{_e(p.get('evidence_source', ''))}</td>",
+            f"<td>{_e(', '.join(p.get('missing_objects', [])))}</td></tr>")) for p in outcome.rollback["pairs"])
+        parts.append("<table><thead><tr><th>版本</th><th>up</th><th>down</th><th>状态</th>"
+                     f"<th>证据来源</th><th>缺失对象</th></tr></thead><tbody>{rows}</tbody></table>")
     else:
-        pairs = outcome.rollback.get("pairs", [])
-        if pairs:
-            rows = "".join(
-                "<tr>"
-                f"<td>{_e(pair['version'])}</td><td><code>{_e(pair['up'])}</code></td>"
-                f"<td><code>{_e(pair.get('down') or '')}</code></td><td>{_e(pair['status'])}</td>"
-                f"<td>{_e(pair.get('evidence_source', ''))}</td>"
-                f"<td>{_e(', '.join(pair.get('missing_objects', [])))}</td></tr>"
-                for pair in pairs
-            )
-            parts.append(
-                "<table><thead><tr><th>版本</th><th>up</th><th>down</th><th>状态</th>"
-                f"<th>证据来源</th><th>缺失对象</th></tr></thead><tbody>{rows}</tbody></table>"
-            )
-        else:
-            parts.append("<p>没有可核验的 up/down 配对。</p>")
+        parts.append("<p>没有可核验的 up/down 配对。</p>")
     for notice in outcome.rollback.get("notices", []):
         parts.append(f'<p class="note">{_e(notice)}</p>')
     idem = outcome.idempotency
-    parts.append("<h2>幂等性摘要</h2>")
-    parts.append(f"<p>工程可解释分：<strong>{idem.get('score', 100)} / 100</strong></p>")
-    parts.append(f'<p class="note">{_e(idem.get("method", ""))}</p>')
-    reasons = idem.get("reason_counts", {})
-    if reasons:
+    parts += ["<h2>幂等性摘要</h2>",
+              f"<p>工程可解释分：<strong>{idem.get('score', 100)} / 100</strong></p>",
+              f'<p class="note">{_e(idem.get("method", ""))}</p>']
+    if idem.get("reason_counts"):
         parts.append("<ul>" + "".join(
-            f"<li><code>{_e(code)}</code>：{count}</li>" for code, count in sorted(reasons.items())
-        ) + "</ul>")
+            f"<li><code>{_e(c)}</code>：{n}</li>" for c, n in sorted(idem["reason_counts"].items())) + "</ul>")
     parts.append("<h2>豁免说明</h2>")
     if outcome.exempted:
-        rows = "".join(
-            "<tr>"
-            f"<td><code>{_e(hit.exemption.id)}</code></td>"
-            f"<td><code>{_e(hit.finding.rule_id)}</code></td>"
-            f"<td><code>{_e(hit.finding.file)}</code></td>"
-            f"<td>{_e(hit.exemption.reason)}</td><td>{_e(hit.exemption.expires_on)}</td></tr>"
-            for hit in outcome.exempted
-        )
-        parts.append(
-            "<table><thead><tr><th>豁免 ID</th><th>规则</th><th>文件</th><th>原因</th>"
-            f"<th>到期日</th></tr></thead><tbody>{rows}</tbody></table>"
-        )
-        parts.append('<p class="note">豁免项在 findings.json 中单独列出，未被静默丢弃。</p>')
+        rows = "".join("".join((
+            "<tr>", f"<td><code>{_e(h.exemption.id)}</code></td>",
+            f"<td><code>{_e(h.finding.rule_id)}</code></td>",
+            f"<td><code>{_e(h.finding.file)}</code></td>",
+            f"<td>{_e(h.exemption.reason)}</td><td>{_e(h.exemption.expires_on)}</td></tr>"))
+            for h in outcome.exempted)
+        parts += ["<table><thead><tr><th>豁免 ID</th><th>规则</th><th>文件</th><th>原因</th>"
+                  f"<th>到期日</th></tr></thead><tbody>{rows}</tbody></table>",
+                  '<p class="note">豁免项在 findings.json 中单独列出，未被静默丢弃。</p>']
     else:
         parts.append("<p>本次没有豁免命中。</p>")
     if outcome.expired_exemptions:
         parts.append("<ul>" + "".join(
-            f"<li>已过期 <code>{_e(item['id'])}</code>，到期日 {_e(item['expires_on'])}</li>"
-            for item in outcome.expired_exemptions
-        ) + "</ul>")
+            f"<li>已过期 <code>{_e(i['id'])}</code>，到期日 {_e(i['expires_on'])}</li>"
+            for i in outcome.expired_exemptions) + "</ul>")
     diff = outcome.diff
-    parts.append("<h2>运行间差异</h2>")
-    parts.append(
-        "<p>"
-        + ("对比运行 <code>" + _e(diff.get("previous_run_id")) + "</code>。"
-           if diff.get("baseline_available") else "没有可用的上一次运行。")
-        + "</p><ul>"
-        + "".join(
-            f"<li>{category}：{diff.get('counts', {}).get(category, 0)}</li>"
-            for category in ("new", "fixed", "persistent", "exempted")
-        )
-        + "</ul>"
-    )
-    parts.append("<h2>解析警告与输入错误</h2>")
-    warnings = outcome.parse_warnings
-    errors = outcome.discovery_errors
-    if warnings or errors:
+    parts += ["<h2>运行间差异</h2>", "<p>"
+              + (f"对比运行 <code>{_e(diff.get('previous_run_id'))}</code>。"
+                 if diff.get("baseline_available") else "没有可用的上一次运行。")
+              + "</p><ul>" + "".join(
+                  f"<li>{c}：{diff.get('counts', {}).get(c, 0)}</li>"
+                  for c in ("new", "fixed", "persistent", "exempted")) + "</ul>",
+              "<h2>解析警告与输入错误</h2>"]
+    if outcome.parse_warnings or outcome.discovery_errors:
         parts.append("<ul>")
-        for item in warnings:
-            parts.append(
-                f"<li><code>{_e(item['file'])}:{item['line']}</code> "
-                f"{_e(item['code'])}：{_e(truncate(item['message'], 140))}</li>"
-            )
-        for item in errors:
+        for item in outcome.parse_warnings:
+            parts.append(f"<li><code>{_e(item['file'])}:{item['line']}</code> {_e(item['code'])}："
+                         f"{_e(truncate(item['message'], 140))}</li>")
+        for item in outcome.discovery_errors:
             parts.append(f"<li><code>{_e(item.get('file', ''))}</code> {_e(item['code'])}：{_e(item['message'])}</li>")
         parts.append("</ul>")
     else:
         parts.append("<p>无。</p>")
     if outcome.notices:
-        parts.append("<h2>提示</h2><ul>" + "".join(
-            f"<li>{_e(item)}</li>" for item in outcome.notices
-        ) + "</ul>")
-    parts.extend([
-        "<h2>复现命令</h2>",
-        f"<pre>{_e(outcome.reproduce_command)}</pre>",
-        '<p class="note">报告仅包含截断证据与定位信息，不复制完整 SQL 原文。</p>',
-        "</body></html>",
-    ])
+        parts.append("<h2>提示</h2><ul>" + "".join(f"<li>{_e(x)}</li>" for x in outcome.notices) + "</ul>")
+    parts += ["<h2>复现命令</h2>", f"<pre>{_e(outcome.reproduce_command)}</pre>",
+              '<p class="note">报告仅包含截断证据与定位信息，不复制完整 SQL 原文。</p>',
+              "</body></html>"]
     return "\n".join(parts) + "\n"
 
 def write_html(outcome: AuditOutcome, output_dir: Path) -> Path:

@@ -6,19 +6,13 @@ from . import TOOL_TITLE, __version__
 from .models import AuditOutcome
 from .report_json import sorted_active
 from .util import atomic_write_text, finding_sort_key, truncate
-CONCLUSIONS = {
-    "blocked": "阻断：存在达到退出阈值的发现",
-    "passed": "通过：没有达到退出阈值的发现",
-}
+CONCLUSIONS = {"blocked": "阻断：存在达到退出阈值的发现", "passed": "通过：没有达到退出阈值的发现"}
 
 def _cell(value: Any) -> str:
     return str(value if value is not None else "").replace("|", "\\|").replace("\n", " ")
 
 def _finding_table(findings: list[Any]) -> list[str]:
-    lines = [
-        "| 严重级别 | 规则 | 位置 | 对象 | 证据 |",
-        "|---|---|---|---|---|",
-    ]
+    lines = ["| 严重级别 | 规则 | 位置 | 对象 | 证据 |", "|---|---|---|---|---|"]
     for finding in findings:
         location = f"{finding.file}:{finding.line_start}"
         lines.append(
@@ -73,8 +67,7 @@ def render_markdown(outcome: AuditOutcome) -> str:
     lines.extend(["", "## 重点发现", ""])
     if active:
         lines.extend(_finding_table(active[:40]))
-        if len(active) > 40:
-            lines.append(f"\n仅展示前 40 条；完整列表见 `findings.json`（共 {len(active)} 条）。")
+        if len(active) > 40: lines.append(f"\n仅展示前 40 条；完整列表见 `findings.json`（共 {len(active)} 条）。")
     else:
         lines.append("无活跃发现。")
     lines.extend(["", "## 回滚配对", ""])
@@ -88,37 +81,27 @@ def render_markdown(outcome: AuditOutcome) -> str:
                 lines.append(
                     f"| {pair['version']} | `{_cell(pair['up'])}` | `{_cell(pair.get('down') or '')}` | "
                     f"{_cell(pair['status'])} | {_cell(pair.get('evidence_source', ''))} | "
-                    f"{_cell(', '.join(pair.get('missing_objects', [])))} |"
-                )
+                    f"{_cell(', '.join(pair.get('missing_objects', [])))} |")
         else:
             lines.append("没有可核验的 up/down 配对。")
     for notice in outcome.rollback.get("notices", []):
         lines.append(f"\n> {notice}")
     lines.extend(["", "## 幂等性摘要", ""])
     idem = outcome.idempotency
-    lines.append(f"- 工程可解释分：**{idem.get('score', 100)} / 100**")
-    lines.append(f"- 口径：{idem.get('method', '')}")
-    reason_counts = idem.get("reason_counts", {})
-    if reason_counts:
-        for code, count in sorted(reason_counts.items()):
-            lines.append(f"- `{code}`：{count}")
-    else:
-        lines.append("- 未记录扣分项。")
+    lines += [f"- 工程可解释分：**{idem.get('score', 100)} / 100**", f"- 口径：{idem.get('method', '')}"]
+    for code, count in sorted(idem.get("reason_counts", {}).items()):
+        lines.append(f"- `{code}`：{count}")
+    if not idem.get("reason_counts"): lines.append("- 未记录扣分项。")
     low = idem.get("low_score_files", [])
-    if low:
-        lines.append("- 低分文件：" + ", ".join(f"`{item['file']}`({item['score']})" for item in low))
+    if low: lines.append("- 低分文件：" + ", ".join(f"`{i['file']}`({i['score']})" for i in low))
     lines.extend(["", "## 豁免说明", ""])
     if outcome.exempted:
-        lines.extend([
-            "| 豁免 ID | 规则 | 文件 | 原因 | 到期日 |",
-            "|---|---|---|---|---|",
-        ])
+        lines += ["| 豁免 ID | 规则 | 文件 | 原因 | 到期日 |", "|---|---|---|---|---|"]
         for hit in outcome.exempted:
             item = hit.finding
             lines.append(
                 f"| `{_cell(hit.exemption.id)}` | `{_cell(item.rule_id)}` | `{_cell(item.file)}` | "
-                f"{_cell(hit.exemption.reason)} | {_cell(hit.exemption.expires_on)} |"
-            )
+                f"{_cell(hit.exemption.reason)} | {_cell(hit.exemption.expires_on)} |")
         lines.append("\n被豁免发现仍在 `findings.json` 的 `exempted_findings` 中单独列出。")
     else:
         lines.append("本次没有豁免命中。")
@@ -144,8 +127,7 @@ def render_markdown(outcome: AuditOutcome) -> str:
     if outcome.discovery_errors:
         for error in outcome.discovery_errors:
             lines.append(f"- `{_cell(error.get('file', ''))}` {_cell(error['code'])}：{_cell(error['message'])}")
-    if not outcome.parse_warnings and not outcome.discovery_errors:
-        lines.append("无。")
+    if not outcome.parse_warnings and not outcome.discovery_errors: lines.append("无。")
     if outcome.notices:
         lines.extend(["", "## 提示", ""])
         for notice in outcome.notices:
