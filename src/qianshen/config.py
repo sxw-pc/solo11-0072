@@ -1,5 +1,6 @@
 """主配置加载与校验。配置错误统一抛出退出码 2 的受控错误。"""
 from __future__ import annotations
+import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,10 @@ ALLOWED_DIALECTS = ("postgres", "mysql", "sqlite")
 ALLOWED_FAIL_ON = ("blocker", "warning", "info", "none")
 ALLOWED_MODES = ("auto", "paired", "single")
 DEFAULT_CLOCK = "2026-01-01T00:00:00Z"
+# 本地解析缓存的环境变量开关与目录覆盖；CI 可用 QIANSHEN_CACHE=off 完全关闭。
+CACHE_DISABLE_ENV = "QIANSHEN_CACHE"
+CACHE_DIR_ENV = "QIANSHEN_CACHE_DIR"
+DEFAULT_CACHE_DIRNAME = ".qianshen/cache"
 @dataclass
 class IgnoreConfig:
     dirs: list[str] = field(default_factory=list)
@@ -36,6 +41,8 @@ class Config:
     irreversible_approvals: list[str]
     rule_overrides: dict[str, dict[str, Any]]
     raw: dict[str, Any] = field(repr=False)
+    cache_enabled: bool = True
+    cache_dir: Path | None = None
     @property
     def config_digest(self) -> str:
         stable = dict(self.raw)
@@ -45,19 +52,12 @@ class Config:
         return sha256_text(canonical_json(stable))
     def summary(self) -> dict[str, Any]:
         return {
-            "project": self.project,
-            "dialect": self.dialect,
-            "naming_mode": self.naming_mode,
-            "version_width": self.version_width,
-            "fail_on": self.fail_on,
-            "clock": self.clock,
-            "ignore": {
-                "dirs": list(self.ignore.dirs),
-                "globs": list(self.ignore.globs),
-                "paths": list(self.ignore.paths),
-            },
-            "allow_grants": self.allow_grants,
-            "large_tables": list(self.large_tables),
+            "project": self.project, "dialect": self.dialect,
+            "naming_mode": self.naming_mode, "version_width": self.version_width,
+            "fail_on": self.fail_on, "clock": self.clock,
+            "ignore": {"dirs": list(self.ignore.dirs), "globs": list(self.ignore.globs),
+                       "paths": list(self.ignore.paths)},
+            "allow_grants": self.allow_grants, "large_tables": list(self.large_tables),
             "rule_overrides": dict(self.rule_overrides),
             "has_baseline": self.baseline_file is not None,
             "has_exemptions": self.exemptions_file is not None,
@@ -81,9 +81,7 @@ def _resolve(value: Any, base: Path, name: str) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise QianshenError(f"配置字段 {name} 必须是非空路径")
     candidate = Path(value).expanduser()
-    if not candidate.is_absolute():
-        candidate = base / candidate
-    return candidate.resolve()
+    return (candidate if candidate.is_absolute() else base / candidate).resolve()
 
 def _as_bool(value: Any, name: str) -> bool:
     if not isinstance(value, bool):
@@ -118,6 +116,25 @@ def _validate_overrides(value: Any) -> dict[str, dict[str, Any]]:
             entry["enabled"] = item["enabled"]
         result[rule_id] = entry
     return result
+
+def _validate_cache(raw_cache: Any, base: Path) -> tuple[bool, Path | None]:
+    """解析 cache 配置；环境变量 QIANSHEN_CACHE/QIANSHEN_CACHE_DIR 优先。
+    目录只读或不可创建时由缓存层透明降级，不影响审计结论。"""
+    enabled, directory = True, None
+    if isinstance(raw_cache, dict):
+        if "enabled" in raw_cache and not isinstance(raw_cache["enabled"], bool):
+            raise QianshenError("cache.enabled 必须是布尔值")
+        enabled = bool(raw_cache.get("enabled", True))
+        if raw_cache.get("dir") is not None:
+            directory = _resolve(raw_cache["dir"], base, "cache.dir")
+    elif raw_cache is not None:
+        raise QianshenError("cache 配置必须是映射")
+    env_switch = os.environ.get(CACHE_DISABLE_ENV)
+    if env_switch is not None and env_switch.strip().lower() in ("off", "false", "0", "no"):
+        enabled = False
+    if os.environ.get(CACHE_DIR_ENV, "").strip():
+        directory = _resolve(os.environ[CACHE_DIR_ENV], base, CACHE_DIR_ENV)
+    return enabled, directory or (base / DEFAULT_CACHE_DIRNAME).resolve()
 
 def load_config(
     path: str | Path,
@@ -167,26 +184,23 @@ def load_config(
                 paths=_as_str_list(ignore_raw.get("paths"), "ignore.paths"),
             ),
             rules_file=_resolve(raw.get("rules_file", "rules/default.yml"), base, "rules_file"),
-            exemptions_file=(
-                _resolve(raw["exemptions_file"], base, "exemptions_file")
-                if raw.get("exemptions_file") else None
-            ),
-            baseline_file=(
-                _resolve(raw["baseline_file"], base, "baseline_file")
-                if raw.get("baseline_file") else None
-            ),
+            exemptions_file=(_resolve(raw["exemptions_file"], base, "exemptions_file")
+                             if raw.get("exemptions_file") else None),
+            baseline_file=(_resolve(raw["baseline_file"], base, "baseline_file")
+                           if raw.get("baseline_file") else None),
             output_dir=_resolve(raw.get("output_dir", "out"), base, "output_dir"),
             ledger_path=_resolve(raw.get("ledger_path", ".qianshen/ledger.sqlite3"), base, "ledger_path"),
             fail_on=fail_on,
             clock=_validate_clock(now_override or raw.get("clock")),
             large_tables=_as_str_list(raw.get("large_tables"), "large_tables"),
             allow_grants=_as_bool(permissions.get("allow_grants", False), "permissions.allow_grants"),
-            irreversible_approvals=_as_str_list(
-                raw.get("irreversible_approvals"), "irreversible_approvals"
-            ),
-            rule_overrides=_validate_overrides(raw.get("rule_overrides")),
-            raw=raw,
+            irreversible_approvals=_as_str_list(raw.get("irreversible_approvals"),
+                                                "irreversible_approvals"),
+            rule_overrides=_validate_overrides(raw.get("rule_overrides")), raw=raw,
         )
+        cache_enabled, cache_dir = _validate_cache(raw.get("cache"), base)
+        config.cache_enabled = cache_enabled
+        config.cache_dir = cache_dir
     except QianshenError:
         raise
     except (TypeError, ValueError) as exc:
@@ -199,10 +213,10 @@ def load_config(
         config = replace(config, ledger_path=Path(ledger_override).expanduser().resolve())
     if now_override is not None:
         config = replace(config, clock=_validate_clock(now_override))
-    if not config.rules_file.is_file():
-        raise QianshenError(f"规则文件不存在: {config.rules_file.name}")
-    if config.exemptions_file is not None and not config.exemptions_file.is_file():
-        raise QianshenError(f"豁免文件不存在: {config.exemptions_file.name}")
-    if config.baseline_file is not None and not config.baseline_file.is_file():
-        raise QianshenError(f"基线文件不存在: {config.baseline_file.name}")
+    for attr, label in (("rules_file", "规则文件"),
+                        ("exemptions_file", "豁免文件"),
+                        ("baseline_file", "基线文件")):
+        target = getattr(config, attr)
+        if target is not None and not target.is_file():
+            raise QianshenError(f"{label}不存在: {target.name}")
     return config

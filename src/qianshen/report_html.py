@@ -8,8 +8,8 @@ from .models import AuditOutcome
 from .report_json import sorted_active
 from .util import atomic_write_text, truncate
 STYLE = """
-:root { --ink:#17212b; --muted:#5b6875; --line:#d8dee5; --bg:#ffffff;
-  --panel:#f5f7f9; --blocker:#9f1d2c; --warning:#8a5a00; --info:#245f8f; }
+:root { --ink:#17212b; --muted:#5b6875; --line:#d8dee5; --bg:#fff; --panel:#f5f7f9;
+  --blocker:#9f1d2c; --warning:#8a5a00; --info:#245f8f; }
 * { box-sizing:border-box; }
 body { margin:0 auto; max-width:1180px; padding:32px 24px 64px; background:var(--bg);
   color:var(--ink); font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; line-height:1.55; }
@@ -20,8 +20,7 @@ p, li { font-size:14px; }
 .sub { color:var(--muted); margin:0 0 20px; }
 .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
 .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
-.card b { display:block; font-size:22px; }
-.card span { color:var(--muted); font-size:12px; }
+.card b { display:block; font-size:22px; } .card span { color:var(--muted); font-size:12px; }
 table { width:100%; border-collapse:collapse; margin:8px 0 16px; font-size:13px; }
 th, td { border:1px solid var(--line); padding:7px 8px; text-align:left; vertical-align:top; }
 th { background:var(--panel); font-weight:600; }
@@ -32,8 +31,7 @@ pre { background:var(--panel); border:1px solid var(--line); border-radius:6px; 
 .blocker { color:var(--blocker); border:1px solid var(--blocker); }
 .warning { color:var(--warning); border:1px solid var(--warning); }
 .info { color:var(--info); border:1px solid var(--info); }
-.note { color:var(--muted); font-size:12px; }
-ul { margin:6px 0 12px; padding-left:22px; }
+.note { color:var(--muted); font-size:12px; } ul { margin:6px 0 12px; padding-left:22px; }
 """
 CONCLUSIONS = {
     "blocked": "阻断：存在达到退出阈值的发现",
@@ -44,23 +42,18 @@ def _e(value: Any) -> str:
     return html.escape(str(value if value is not None else ""))
 
 def _finding_rows(findings: list[Any]) -> str:
-    rows = []
-    for finding in findings:
-        rows.append(
-            "<tr>"
-            f"<td><span class=\"badge {_e(finding.severity)}\">{_e(finding.severity)}</span></td>"
-            f"<td><code>{_e(finding.rule_id)}</code></td>"
-            f"<td><code>{_e(finding.file)}:{finding.line_start}</code></td>"
-            f"<td>{_e(finding.object_name)}</td>"
-            f"<td>{_e(truncate(finding.evidence, 130))}</td>"
-            "</tr>"
-        )
+    rows = [
+        "<tr>"
+        f"<td><span class=\"badge {_e(f.severity)}\">{_e(f.severity)}</span></td>"
+        f"<td><code>{_e(f.rule_id)}</code></td>"
+        f"<td><code>{_e(f.file)}:{f.line_start}</code></td>"
+        f"<td>{_e(f.object_name)}</td>"
+        f"<td>{_e(truncate(f.evidence, 130))}</td></tr>"
+        for f in findings]
     if not rows:
         return "<p>无活跃发现。</p>"
-    return (
-        "<table><thead><tr><th>严重级别</th><th>规则</th><th>位置</th>"
-        "<th>对象</th><th>证据</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
-    )
+    return ("<table><thead><tr><th>严重级别</th><th>规则</th><th>位置</th>"
+            "<th>对象</th><th>证据</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
 def render_html(outcome: AuditOutcome) -> str:
     active = sorted_active(outcome)
@@ -80,16 +73,13 @@ def render_html(outcome: AuditOutcome) -> str:
         f'<div class="card"><b>{len(outcome.exempted)}</b><span>已豁免</span></div>',
         f'<div class="card"><b>{len(outcome.files)}</b><span>迁移文件</span></div>',
         f'<div class="card"><b>{outcome.idempotency.get("score", 100)}</b><span>幂等性分</span></div>',
-        "</div>",
-        "<h2>运行信息</h2><ul>",
+        "</div>", "<h2>运行信息</h2><ul>",
         f"<li>方言 <code>{_e(outcome.dialect)}</code>；退出阈值 <code>{_e(outcome.fail_on)}</code>；退出码 {outcome.exit_code}</li>",
         f"<li>输入 <code>{_e(outcome.input_summary.get('root', ''))}</code>；语句 {len(outcome.statements)} 条</li>",
         f"<li>规则集指纹 <code>{_e(outcome.rules_sha256[:16])}</code>；工具版本 <code>{_e(__version__)}</code></li>",
-        "</ul>",
-        "<h2>阻断项</h2>",
+        "</ul>", "<h2>阻断项</h2>",
         _finding_rows([item for item in active if item.severity == "blocker"]),
-        "<h2>重点发现</h2>",
-        _finding_rows(active[:40]),
+        "<h2>重点发现</h2>", _finding_rows(active[:40]),
     ]
     if len(active) > 40:
         parts.append(f'<p class="note">仅展示前 40 条；完整列表见 findings.json（共 {len(active)} 条）。</p>')
@@ -116,9 +106,10 @@ def render_html(outcome: AuditOutcome) -> str:
     for notice in outcome.rollback.get("notices", []):
         parts.append(f'<p class="note">{_e(notice)}</p>')
     idem = outcome.idempotency
-    parts.append("<h2>幂等性摘要</h2>")
-    parts.append(f"<p>工程可解释分：<strong>{idem.get('score', 100)} / 100</strong></p>")
-    parts.append(f'<p class="note">{_e(idem.get("method", ""))}</p>')
+    parts.extend([
+        "<h2>幂等性摘要</h2>",
+        f"<p>工程可解释分：<strong>{idem.get('score', 100)} / 100</strong></p>",
+        f'<p class="note">{_e(idem.get("method", ""))}</p>'])
     reasons = idem.get("reason_counts", {})
     if reasons:
         parts.append("<ul>" + "".join(
@@ -132,12 +123,10 @@ def render_html(outcome: AuditOutcome) -> str:
             f"<td><code>{_e(hit.finding.rule_id)}</code></td>"
             f"<td><code>{_e(hit.finding.file)}</code></td>"
             f"<td>{_e(hit.exemption.reason)}</td><td>{_e(hit.exemption.expires_on)}</td></tr>"
-            for hit in outcome.exempted
-        )
+            for hit in outcome.exempted)
         parts.append(
             "<table><thead><tr><th>豁免 ID</th><th>规则</th><th>文件</th><th>原因</th>"
-            f"<th>到期日</th></tr></thead><tbody>{rows}</tbody></table>"
-        )
+            f"<th>到期日</th></tr></thead><tbody>{rows}</tbody></table>")
         parts.append('<p class="note">豁免项在 findings.json 中单独列出，未被静默丢弃。</p>')
     else:
         parts.append("<p>本次没有豁免命中。</p>")

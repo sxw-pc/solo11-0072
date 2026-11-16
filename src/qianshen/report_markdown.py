@@ -49,18 +49,14 @@ def render_markdown(outcome: AuditOutcome) -> str:
     else:
         lines.append("无阻断级发现。")
     lines.extend([
-        "",
-        "## 统计汇总",
-        "",
+        "", "## 统计汇总", "",
         f"- blocker：{counts.get('blocker', 0)}",
         f"- warning：{counts.get('warning', 0)}",
         f"- info：{counts.get('info', 0)}",
         f"- 已豁免：{len(outcome.exempted)}",
         f"- 过期豁免：{len(outcome.expired_exemptions)}",
         f"- 解析降级警告：{len(outcome.parse_warnings)}",
-        "",
-        "### 按类别",
-        "",
+        "", "### 按类别", "",
     ])
     categories: dict[str, int] = {}
     for finding in active:
@@ -109,16 +105,12 @@ def render_markdown(outcome: AuditOutcome) -> str:
         lines.append("- 低分文件：" + ", ".join(f"`{item['file']}`({item['score']})" for item in low))
     lines.extend(["", "## 豁免说明", ""])
     if outcome.exempted:
-        lines.extend([
-            "| 豁免 ID | 规则 | 文件 | 原因 | 到期日 |",
-            "|---|---|---|---|---|",
-        ])
+        lines.extend(["| 豁免 ID | 规则 | 文件 | 原因 | 到期日 |", "|---|---|---|---|---|"])
         for hit in outcome.exempted:
             item = hit.finding
             lines.append(
                 f"| `{_cell(hit.exemption.id)}` | `{_cell(item.rule_id)}` | `{_cell(item.file)}` | "
-                f"{_cell(hit.exemption.reason)} | {_cell(hit.exemption.expires_on)} |"
-            )
+                f"{_cell(hit.exemption.reason)} | {_cell(hit.exemption.expires_on)} |")
         lines.append("\n被豁免发现仍在 `findings.json` 的 `exempted_findings` 中单独列出。")
     else:
         lines.append("本次没有豁免命中。")
@@ -150,17 +142,8 @@ def render_markdown(outcome: AuditOutcome) -> str:
         lines.extend(["", "## 提示", ""])
         for notice in outcome.notices:
             lines.append(f"- {notice}")
-    lines.extend([
-        "",
-        "## 复现命令",
-        "",
-        "```bash",
-        outcome.reproduce_command,
-        "```",
-        "",
-        "> 报告仅包含截断证据与定位信息，不复制完整 SQL 原文。",
-        "",
-    ])
+    lines.extend(["", "## 复现命令", "", "```bash", outcome.reproduce_command, "```", "",
+        "> 报告仅包含截断证据与定位信息，不复制完整 SQL 原文。", ""])
     return "\n".join(lines)
 
 def write_markdown(outcome: AuditOutcome, output_dir: Path) -> Path:

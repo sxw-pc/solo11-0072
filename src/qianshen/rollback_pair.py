@@ -38,10 +38,8 @@ def object_keys(statements: list[StatementInfo]) -> set[tuple[str, str]]:
                 keys.add(("index", index))
         elif stmt.kind == "drop_index" and stmt.objects:
             keys.add(("index", stmt.objects[0]))
-        elif stmt.kind in ("create_view", "drop_view") and stmt.objects:
-            keys.add(("view", stmt.objects[0]))
-        elif stmt.kind in ("create_type", "alter_type") and stmt.objects:
-            keys.add(("type", stmt.objects[0]))
+        elif stmt.kind in ("create_view", "drop_view", "create_type", "alter_type") and stmt.objects:
+            keys.add(("view" if "view" in stmt.kind else "type", stmt.objects[0]))
         elif stmt.kind.startswith("alter_table") and table:
             if stmt.attrs.get("dropped_column"):
                 keys.add(("column", f"{table}.{stmt.attrs['dropped_column']}"))
@@ -95,7 +93,6 @@ def _destructive_items(statements: list[StatementInfo]) -> list[tuple[StatementI
         elif stmt.kind == "truncate" and table:
             result.append((stmt, table, "truncate"))
     return result
-
 def _finding(
     rule_id: str, title: str, severity: str, file_rel: str, version: int | None,
     direction: str, object_name: str, evidence: str, suggestion: str,
@@ -119,13 +116,14 @@ def check_rollback_pairs(
         by_file[stmt.file_rel].append(stmt)
     for items in by_file.values():
         items.sort(key=lambda item: item.seq)
-    up_files = {file.version: file for file in sorted(files, key=lambda item: item.rel_path) if file.direction == "up"}
-    down_files = {file.version: file for file in sorted(files, key=lambda item: item.rel_path) if file.direction == "down"}
+    ordered_files = sorted(files, key=lambda item: item.rel_path)
+    up_files = {f.version: f for f in ordered_files if f.direction == "up"}
+    down_files = {f.version: f for f in ordered_files if f.direction == "down"}
     if not enabled:
         return [], {"enabled": False, "pairs": [], "notices": ["回滚配对检查已由配置关闭。"]}
     if not up_files:
-        message = "当前输入没有 up/down 成对文件；单文件模式不执行回滚配对检查。"
-        return [], {"enabled": True, "pairs": [], "notices": [message]}
+        return [], {"enabled": True, "pairs": [], "notices": [
+            "当前输入没有 up/down 成对文件；单文件模式不执行回滚配对检查。"]}
     findings: list[Finding] = []
     pairs: list[dict[str, Any]] = []
     for version in sorted(up_files):
@@ -133,19 +131,18 @@ def check_rollback_pairs(
         down = down_files.get(version)
         up_statements = by_file.get(up.rel_path, [])
         pair: dict[str, Any] = {
-            "version": version, "up": up.rel_path, "down": down.rel_path if down else None,
-            "status": "ok", "evidence_source": "ast", "up_objects": [],
-            "down_objects": [], "missing_objects": [], "extra_objects": [],
-            "irreversible_changes": [], "findings": [],
-        }
+            "version": version, "up": up.rel_path,
+            "down": down.rel_path if down else None, "status": "ok",
+            "evidence_source": "ast", "up_objects": [], "down_objects": [],
+            "missing_objects": [], "extra_objects": [],
+            "irreversible_changes": [], "findings": []}
         if down is None:
             finding = _finding(
                 "rollback.missing_down", "up 迁移缺少 down 回滚文件", "blocker",
                 up.rel_path, version, "up", up.rel_path,
                 f"版本 {version} 只有 up 文件 {up.rel_path}",
                 "补充对应 down 文件，并确认回滚对象覆盖 up 的主要变更。",
-                "file", None, f"missing-down:{version}",
-            )
+                "file", None, f"missing-down:{version}")
             findings.append(finding)
             pair.update({"status": "missing_down", "evidence_source": "none", "findings": [finding.fingerprint]})
             pairs.append(pair)
@@ -159,13 +156,11 @@ def check_rollback_pairs(
                 down.rel_path, version, "down", down.rel_path,
                 f"{down.rel_path} 没有可执行语句",
                 "补充与 up 对象级变更对应的回滚语句，或在评审记录中说明不适用原因。",
-                source, None, f"empty-down:{down.sha256}",
-            )
+                source, None, f"empty-down:{down.sha256}")
             findings.append(finding)
-            pair.update({
-                "status": "empty_down", "evidence_source": "none" if not down_statements else source,
-                "findings": [finding.fingerprint],
-            })
+            pair.update({"status": "empty_down",
+                         "evidence_source": "none" if not down_statements else source,
+                         "findings": [finding.fingerprint]})
             pairs.append(pair)
             continue
         up_keys = object_keys(up_statements)
@@ -186,20 +181,18 @@ def check_rollback_pairs(
                 "rollback.object_mismatch", "down 未覆盖 up 的对象级变更", "blocker",
                 down.rel_path, version, "down", ", ".join(name for _, name in missing_keys[:3]),
                 evidence, "逐项核对表、列、索引、约束、视图与类型，补齐回滚覆盖。",
-                source, down_statements[0] if down_statements else None, "|".join(sorted(evidence.split())),
-            )
+                source, down_statements[0] if down_statements else None,
+                "|".join(sorted(evidence.split())))
             findings.append(finding)
             pair["findings"].append(finding.fingerprint)
         if extra_keys:
             evidence = "down 包含 up 未涉及对象: " + ", ".join(
-                f"{kind}:{name}" for kind, name in extra_keys[:6]
-            )
+                f"{kind}:{name}" for kind, name in extra_keys[:6])
             finding = _finding(
                 "rollback.down_extra_object", "down 操作了 up 未涉及的对象", "warning",
                 down.rel_path, version, "down", ", ".join(name for _, name in extra_keys[:3]),
                 evidence, "确认额外回滚操作不会删除或覆盖本次迁移之外的对象。",
-                source, None, "|".join(sorted(evidence.split())),
-            )
+                source, None, "|".join(sorted(evidence.split())))
             findings.append(finding)
             pair["findings"].append(finding.fingerprint)
         approved, reason = _approved(up, config)
@@ -216,20 +209,14 @@ def check_rollback_pairs(
                     up.rel_path, version, "up", object_name,
                     f"{action} 对 {object_name} 可能造成数据不可恢复",
                     '如已人工确认，在文件头注释加入 -- qianshen: irreversible approved-reason="demo fixture"；该标记不会跳过其他检查。',
-                    stmt.source, stmt, stmt.sha256,
-                )
+                    stmt.source, stmt, stmt.sha256)
                 findings.append(finding)
                 pair["findings"].append(finding.fingerprint)
                 pair["status"] = "irreversible"
         for stmt, object_name, action in _destructive_items(down_statements):
-            if action == "truncate":
-                expected = False
-            elif action == "drop_table":
-                expected = object_name in up_created
-            elif action == "drop_column":
-                expected = ("column", object_name) in up_keys
-            else:
-                expected = False
+            expected = (object_name in up_created if action == "drop_table"
+                        else ("column", object_name) in up_keys if action == "drop_column"
+                        else False)
             if expected:
                 continue
             finding = _finding(
@@ -237,20 +224,16 @@ def check_rollback_pairs(
                 down.rel_path, version, "down", object_name,
                 f"down 中 {action} 作用于 {object_name}，不属于本次 up 的明确逆操作",
                 "确认回滚不会破坏迁移之外的数据；必要时拆分为独立迁移。",
-                stmt.source, stmt, stmt.sha256,
-            )
+                stmt.source, stmt, stmt.sha256)
             findings.append(finding)
             pair["findings"].append(finding.fingerprint)
-        if pair["status"] == "ok" and missing_keys:
-            pair["status"] = "object_mismatch"
-        elif pair["status"] == "ok" and pair["findings"]:
-            pair["status"] = "warnings"
+        if pair["status"] == "ok":
+            pair["status"] = "object_mismatch" if missing_keys else (
+                "warnings" if pair["findings"] else "ok")
         pairs.append(pair)
-    counts = {
-        "pairs": len(pairs),
-        "ok": sum(1 for pair in pairs if pair["status"] == "ok"),
-        "issues": sum(1 for pair in pairs if pair["status"] != "ok"),
-    }
+    counts = {"pairs": len(pairs),
+              "ok": sum(1 for pair in pairs if pair["status"] == "ok"),
+              "issues": sum(1 for pair in pairs if pair["status"] != "ok")}
     return findings, {
         "enabled": True, "pairs": pairs, "counts": counts,
         "notices": [] if pairs else ["没有可核验的 up 版本"],

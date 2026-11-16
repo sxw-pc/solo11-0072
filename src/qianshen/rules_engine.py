@@ -1,6 +1,7 @@
 """声明式规则加载、匹配及文件级检查。"""
 from __future__ import annotations
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,9 +66,8 @@ def load_rules(config: Config) -> RulesBundle:
         if "check" in match and match["check"] not in CHECKS:
             raise QianshenError(f"规则 {rule_id} 使用了未知检查: {match['check']}")
         override = config.rule_overrides.get(rule_id, {})
-        rule = Rule(
-            id=rule_id,
-            title=str(item.get("title", rule_id)),
+        rules.append(Rule(
+            id=rule_id, title=str(item.get("title", rule_id)),
             severity=override.get("severity", severity),
             category=str(item.get("category", "other")),
             applies_to=_list(item.get("applies_to", ["statement"]), "applies_to"),
@@ -77,9 +77,7 @@ def load_rules(config: Config) -> RulesBundle:
             enabled=bool(override.get("enabled", item.get("enabled", True))),
             dialects=_list(item.get("dialects"), "dialects"),
             directions=_list(item.get("directions"), "directions"),
-            path_globs=_list(item.get("path_globs"), "path_globs"),
-        )
-        rules.append(rule)
+            path_globs=_list(item.get("path_globs"), "path_globs")))
     unknown_overrides = set(config.rule_overrides) - seen
     if unknown_overrides:
         raise QianshenError(f"rule_overrides 含未知规则: {sorted(unknown_overrides)}")
@@ -193,10 +191,9 @@ def _statement_finding(
         rule_id=rule.id, title=rule.title, severity=severity, category=rule.category,
         file=file.rel_path, version=stmt.version, direction=file.direction,
         object_name=object_name, evidence=stmt.summary,
-        suggestion=_render(rule.suggestion, values),
-        source=stmt.source, line_start=stmt.start_line, line_end=stmt.end_line,
-        statement_seq=stmt.seq, confidence=confidence, detail=f"stmt:{stmt.sha256}",
-    )
+        suggestion=_render(rule.suggestion, values), source=stmt.source,
+        line_start=stmt.start_line, line_end=stmt.end_line,
+        statement_seq=stmt.seq, confidence=confidence, detail=f"stmt:{stmt.sha256}")
 
 def evaluate_rules(
     rules_bundle: RulesBundle,
@@ -204,9 +201,9 @@ def evaluate_rules(
     statements: list[StatementInfo],
     config: Config,
 ) -> list[Finding]:
-    by_file: dict[str, list[StatementInfo]] = {}
+    by_file: dict[str, list[StatementInfo]] = defaultdict(list)
     for stmt in statements:
-        by_file.setdefault(stmt.file_rel, []).append(stmt)
+        by_file[stmt.file_rel].append(stmt)
     findings: list[Finding] = []
     for rule in rules_bundle.rules:
         if not rule.enabled:

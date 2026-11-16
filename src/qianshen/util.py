@@ -62,11 +62,7 @@ def worse_severity(left: str, right: str) -> str:
     return left if severity_rank(left) >= severity_rank(right) else right
 
 def downgrade_severity(severity: str) -> str:
-    if severity == "blocker":
-        return "warning"
-    if severity == "warning":
-        return "info"
-    return severity
+    return {"blocker": "warning", "warning": "info"}.get(severity, severity)
 
 def parse_iso_datetime(value: str) -> datetime:
     text = (value or "").strip()

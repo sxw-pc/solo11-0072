@@ -24,14 +24,11 @@ from .util import (
 from .version_chain import build_input_summary, check_version_chain
 
 def _reproduce(config: Config) -> str:
-    parts = [
-        "python", "-m", "qianshen", "audit",
+    parts = ["python", "-m", "qianshen", "audit",
         "--config", relative_display(config.path),
         "--migrations", relative_display(config.migrations_dir),
         "--out", relative_display(config.output_dir),
-        "--ledger", relative_display(config.ledger_path),
-        "--now", config.clock,
-    ]
+        "--ledger", relative_display(config.ledger_path), "--now", config.clock]
     return " ".join(shlex.quote(part) for part in parts)
 
 def _exit_code(findings: list, fail_on: str) -> int:
@@ -42,7 +39,10 @@ def _exit_code(findings: list, fail_on: str) -> int:
 
 def run_audit(config: Config) -> AuditOutcome:
     files, discovery_errors = discover(config)
-    statements, parse_warnings = parse_all(files, config.dialect)
+    # 解析缓存与类型状态检查点只复用与文件文本/方言/解析器版本绑定的事实；
+    # 规则、豁免、diff 与报告生成在缓存之外每轮重算。缓存任何故障都透明降级。
+    cache_dir = config.cache_dir if config.cache_enabled else None
+    statements, parse_warnings = parse_all(files, config.dialect, cache_dir=cache_dir)
     version_findings, version_result = check_version_chain(files, config)
     rules_bundle = load_rules(config)
     rule_findings = evaluate_rules(rules_bundle, files, statements, config)
@@ -50,20 +50,15 @@ def run_audit(config: Config) -> AuditOutcome:
     idempotency = calculate_idempotency(files, statements)
     exemptions = load_exemptions(config)
     clock = parse_iso_datetime(config.clock)
-    pre_exemption = version_findings + rule_findings + rollback_findings
     active, hits, expired, expired_findings = apply_exemptions(
-        pre_exemption, exemptions, clock.date()
-    )
+        version_findings + rule_findings + rollback_findings, exemptions, clock.date())
     findings = active + expired_findings + [hit.finding for hit in hits]
     findings.sort(key=finding_sort_key)
     input_summary = build_input_summary(files, config)
-    finding_state = canonical_json([
-        [item.fingerprint, item.status] for item in findings
-    ])
+    finding_state = canonical_json([[item.fingerprint, item.status] for item in findings])
     run_id = "qn-" + sha256_text("|".join([
         __version__, config.clock, config.config_digest, rules_bundle.sha256,
-        str(input_summary["sha256"]), finding_state,
-    ]))[:20]
+        str(input_summary["sha256"]), finding_state]))[:20]
     try:
         previous = previous_findings(config.ledger_path, exclude_run_id=run_id)
     except sqlite3.Error as exc:
@@ -75,32 +70,16 @@ def run_audit(config: Config) -> AuditOutcome:
     if len(files) and not statements:
         notices.append("未从输入文件中解析出语句，请检查文件内容。")
     outcome = AuditOutcome(
-        run_id=run_id,
-        started_at=config.clock,
-        ended_at=config.clock,
-        config_digest=config.config_digest,
-        rules_sha256=rules_bundle.sha256,
-        input_summary=input_summary,
-        files=files,
-        statements=statements,
-        findings=findings,
-        exempted=hits,
-        expired_exemptions=expired,
-        parse_warnings=parse_warnings,
-        discovery_errors=discovery_errors,
-        version_result=version_result,
-        rollback=rollback_result,
-        idempotency=idempotency,
-        diff=diff,
-        rule_snapshots=rules_bundle.snapshots,
-        exit_code=exit_code,
-        conclusion=conclusion,
-        fail_on=config.fail_on,
-        dialect=config.dialect,
-        config_summary=config.summary(),
-        reproduce_command=_reproduce(config),
-        notices=notices,
-    )
+        run_id=run_id, started_at=config.clock, ended_at=config.clock,
+        config_digest=config.config_digest, rules_sha256=rules_bundle.sha256,
+        input_summary=input_summary, files=files, statements=statements,
+        findings=findings, exempted=hits, expired_exemptions=expired,
+        parse_warnings=parse_warnings, discovery_errors=discovery_errors,
+        version_result=version_result, rollback=rollback_result,
+        idempotency=idempotency, diff=diff, rule_snapshots=rules_bundle.snapshots,
+        exit_code=exit_code, conclusion=conclusion, fail_on=config.fail_on,
+        dialect=config.dialect, config_summary=config.summary(),
+        reproduce_command=_reproduce(config), notices=notices)
     try:
         ensure_dir(config.output_dir)
         write_json(outcome, config.output_dir)

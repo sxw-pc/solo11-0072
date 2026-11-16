@@ -13,11 +13,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     audit = subparsers.add_parser("audit", help="评审一个迁移目录")
-    audit.add_argument("--config", default="qianshen.yml", help="主配置 YAML")
-    audit.add_argument("--migrations", help="覆盖 migrations_dir")
-    audit.add_argument("--out", help="覆盖报告输出目录")
-    audit.add_argument("--ledger", help="覆盖 SQLite 台账路径")
-    audit.add_argument("--now", help="注入确定性 ISO 8601 时钟")
+    for flag, help_text in (("--config", "主配置 YAML"), ("--migrations", "覆盖 migrations_dir"),
+                            ("--out", "覆盖报告输出目录"), ("--ledger", "覆盖 SQLite 台账路径"),
+                            ("--now", "注入确定性 ISO 8601 时钟")):
+        audit.add_argument(flag, default="qianshen.yml" if flag == "--config" else None,
+                           help=help_text)
     audit.add_argument("--fail-on", choices=ALLOWED_FAIL_ON, help="覆盖退出阈值")
     audit.add_argument("--quiet", action="store_true", help="不输出摘要")
     demo = subparsers.add_parser("demo", help="运行六个内置 fixture 的离线演示")

@@ -8,12 +8,9 @@ def token_classify(sql: str) -> tuple[str, list[str], dict[str, Any]]:
     text = re.sub(r"\s+", " ", strip_comments(sql)).strip()
     upper = text.upper()
     attrs: dict[str, Any] = {}
-    if re.match(r"^BEGIN\b", upper):
-        return "begin", [], attrs
-    if re.match(r"^COMMIT\b", upper):
-        return "commit", [], attrs
-    if re.match(r"^ROLLBACK\b", upper):
-        return "rollback", [], attrs
+    for keyword in ("BEGIN", "COMMIT", "ROLLBACK"):
+        if re.match(rf"^{keyword}\b", upper):
+            return keyword.lower(), [], attrs
     match = re.match(
         r"^CREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?(TABLE|INDEX|VIEW|TYPE)\s+"
         r"(?:IF\s+NOT\s+EXISTS\s+)?([\w.\"]+)",
@@ -39,14 +36,8 @@ def token_classify(sql: str) -> tuple[str, list[str], dict[str, Any]]:
         if re.search(r"\bADD\s+COLUMN\b", rest):
             attrs["actions"] = ["add_column"]
             attrs["has_if_not_exists"] = "IF NOT EXISTS" in rest
-            attrs["added_columns"] = [
-                {
-                    "name": "",
-                    "type": None,
-                    "not_null": "NOT NULL" in rest,
-                    "has_default": "DEFAULT" in rest,
-                }
-            ]
+            attrs["added_columns"] = [{"name": "", "type": None,
+                "not_null": "NOT NULL" in rest, "has_default": "DEFAULT" in rest}]
             return "alter_table_add_column", [table], attrs
         if re.search(r"\bALTER\s+COLUMN\b.*\bTYPE\b", rest):
             attrs["actions"] = ["alter_type"]

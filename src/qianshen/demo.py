@@ -37,22 +37,18 @@ def _write_config(
     directory = output_root / name
     ensure_dir(directory)
     root = _project_root()
-    exemptions = root / "fixtures" / "exemptions.yml" if fixture == "migrations_exempted" else None
+    exemptions = (root / "fixtures" / "exemptions.yml"
+                  if fixture == "migrations_exempted" else None)
     config_data = {
-        "project": "qianshen-audit",
-        "version": 1,
+        "project": "qianshen-audit", "version": 1,
         "migrations_dir": _relative(root / "fixtures" / fixture, directory),
-        "dialect": "postgres",
-        "naming": {"mode": "auto", "version_width": 4},
-        "ignore": {"dirs": source.ignore.dirs, "globs": source.ignore.globs, "paths": source.ignore.paths},
+        "dialect": "postgres", "naming": {"mode": "auto", "version_width": 4},
+        "ignore": {"dirs": source.ignore.dirs, "globs": source.ignore.globs,
+                   "paths": source.ignore.paths},
         "rules_file": _relative(root / "rules" / "default.yml", directory),
         "exemptions_file": _relative(exemptions, directory) if exemptions else None,
-        "baseline_file": None,
-        "output_dir": ".",
-        "ledger_path": "ledger.sqlite3",
-        "fail_on": "blocker",
-        "clock": now,
-        "large_tables": list(source.large_tables),
+        "baseline_file": None, "output_dir": ".", "ledger_path": "ledger.sqlite3",
+        "fail_on": "blocker", "clock": now, "large_tables": list(source.large_tables),
         "permissions": {"allow_grants": source.allow_grants},
         "pairing": {"check_rollback": True},
         "irreversible_approvals": list(source.irreversible_approvals),
@@ -64,17 +60,12 @@ def _write_config(
 
 def _index_html(entries: list[dict[str, Any]], now: str) -> str:
     rows = "".join(
-        "<tr>"
-        f"<td>{html.escape(item['fixture'])}</td>"
-        f"<td>{html.escape(item['description'])}</td>"
-        f"<td>{item['exit_code']}</td><td>{item['findings']}</td><td>{item['exempted']}</td>"
-        f"<td>{item['idempotency_score']}</td>"
-        f'<td><a href="{item["name"]}/report.html">HTML</a> · '
+        "<tr>" + "".join(f"<td>{html.escape(str(item[k]))}</td>" for k in
+        ("fixture", "description", "exit_code", "findings", "exempted", "idempotency_score"))
+        + f'<td><a href="{item["name"]}/report.html">HTML</a> · '
         f'<a href="{item["name"]}/report.md">Markdown</a> · '
-        f'<a href="{item["name"]}/findings.json">JSON</a></td>'
-        "</tr>"
-        for item in entries
-    )
+        f'<a href="{item["name"]}/findings.json">JSON</a></td></tr>'
+        for item in entries)
     style = (
         "body{max-width:1100px;margin:36px auto;padding:0 24px;color:#17212b;"
         "font-family:ui-sans-serif,system-ui,sans-serif;line-height:1.55}"
@@ -110,20 +101,14 @@ def run_demo(output: str | Path, *, now: str = "2026-01-01T00:00:00Z") -> dict[s
         config = load_config(config_path)
         outcome = run_audit(config)
         entries.append({
-            "name": name,
-            "fixture": fixture,
-            "description": description,
-            "run_id": outcome.run_id,
-            "conclusion": outcome.conclusion,
-            "exit_code": outcome.exit_code,
-            "findings": len(outcome.active_findings),
+            "name": name, "fixture": fixture, "description": description,
+            "run_id": outcome.run_id, "conclusion": outcome.conclusion,
+            "exit_code": outcome.exit_code, "findings": len(outcome.active_findings),
             "exempted": len(outcome.exempted),
             "expired_exemptions": len(outcome.expired_exemptions),
             "idempotency_score": outcome.idempotency.get("score"),
-            "outputs": [
-                f"{name}/findings.json", f"{name}/report.md",
-                f"{name}/report.html", f"{name}/ledger.sqlite3",
-            ],
+            "outputs": [f"{name}/{n}" for n in
+                        ("findings.json", "report.md", "report.html", "ledger.sqlite3")],
         })
     summary = {
         "schema_version": "1.0",

@@ -40,36 +40,23 @@ def load_exemptions(config: Config) -> list[Exemption]:
         except ValueError as exc:
             raise QianshenError(f"豁免 {exemption_id} 的 expires_on 无效: {exc}") from exc
         version = item.get("version")
-        if version is not None:
-            if not isinstance(version, int):
-                raise QianshenError(f"豁免 {exemption_id} 的 version 必须是整数")
-        rule_id = item.get("rule_id")
-        path_glob = item.get("path_glob")
-        fingerprint = item.get("fingerprint")
+        if version is not None and not isinstance(version, int):
+            raise QianshenError(f"豁免 {exemption_id} 的 version 必须是整数")
+        rule_id, path_glob, fingerprint = item.get("rule_id"), item.get("path_glob"), item.get("fingerprint")
         if not any(isinstance(value, str) and value for value in (rule_id, path_glob, fingerprint)):
             raise QianshenError(f"豁免 {exemption_id} 至少需要 rule_id、path_glob 或 fingerprint")
         exemptions.append(Exemption(
-            id=exemption_id,
-            rule_id=str(rule_id) if rule_id else None,
-            path_glob=str(path_glob) if path_glob else None,
-            version=version,
+            id=exemption_id, rule_id=str(rule_id) if rule_id else None,
+            path_glob=str(path_glob) if path_glob else None, version=version,
             fingerprint=str(fingerprint) if fingerprint else None,
-            reason=reason,
-            expires_on=expires_on,
-            expires_date=expires_date,
-        ))
+            reason=reason, expires_on=expires_on, expires_date=expires_date))
     return exemptions
 
 def _matches(exemption: Exemption, finding: Finding) -> bool:
-    if exemption.rule_id and exemption.rule_id != finding.rule_id:
-        return False
-    if exemption.path_glob and not path_matches(finding.file, exemption.path_glob):
-        return False
-    if exemption.version is not None and exemption.version != finding.version:
-        return False
-    if exemption.fingerprint and exemption.fingerprint != finding.fingerprint:
-        return False
-    return True
+    return not ((exemption.rule_id and exemption.rule_id != finding.rule_id)
+                or (exemption.path_glob and not path_matches(finding.file, exemption.path_glob))
+                or (exemption.version is not None and exemption.version != finding.version)
+                or (exemption.fingerprint and exemption.fingerprint != finding.fingerprint))
 
 def apply_exemptions(
     findings: list[Finding], exemptions: list[Exemption], clock: date
@@ -81,28 +68,18 @@ def apply_exemptions(
     valid: list[Exemption] = []
     for exemption in exemptions:
         if exemption.expires_date < clock:
-            expired.append({
-                "id": exemption.id,
-                "rule_id": exemption.rule_id,
-                "path_glob": exemption.path_glob,
-                "version": exemption.version,
-                "reason": exemption.reason,
-                "expires_on": exemption.expires_on,
-            })
+            expired.append({"id": exemption.id, "rule_id": exemption.rule_id,
+                "path_glob": exemption.path_glob, "version": exemption.version,
+                "reason": exemption.reason, "expires_on": exemption.expires_on})
             expired_findings.append(make_finding(
-                rule_id="config.exemption_expired",
-                title="豁免已过期",
-                severity="warning",
-                category="configuration",
-                file=exemption.path_glob or ".",
-                version=exemption.version,
-                direction="mixed",
-                object_name=exemption.id,
+                rule_id="config.exemption_expired", title="豁免已过期",
+                severity="warning", category="configuration",
+                file=exemption.path_glob or ".", version=exemption.version,
+                direction="mixed", object_name=exemption.id,
                 evidence=f"豁免 {exemption.id} 已于 {exemption.expires_on} 过期",
                 suggestion="更新豁免依据与有效期，或移除豁免并处理对应发现。",
                 source="config",
-                detail=f"expired-exemption:{exemption.id}:{exemption.expires_on}",
-            ))
+                detail=f"expired-exemption:{exemption.id}:{exemption.expires_on}"))
         else:
             valid.append(exemption)
     valid.sort(key=lambda item: item.id)

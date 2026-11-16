@@ -210,6 +210,21 @@ rule_overrides: {}
 - `rule_overrides`：按规则 ID 覆盖 `severity` / `enabled` 等字段。
 - `baseline`（可选）：用 `severity_modified`、`severity_deleted`、`severity_added` 分别设置基线修改、删除、新增发现的严重级别；新增默认 warning，不直接阻断。
 
+### 本地解析缓存（可选，默认开启）
+
+历史迁移数百个文件、增量提交只改一个文件时，重复的 `split_sql` 与 `sqlglot.parse_one` 会占掉大部分静态核验时间。缓存分两层，身份边界严格分开，任一层不可用、损坏或版本不兼容都透明退回无缓存路径，审计结论与无缓存运行逐字节一致：
+
+```yaml
+cache:
+  enabled: true            # 默认 true；环境变量 QIANSHEN_CACHE=off 可整体关闭
+  dir: .qianshen/cache     # 可选，默认配置目录下 .qianshen/cache；QIANSHEN_CACHE_DIR 可覆盖
+```
+
+1. **解析缓存（只存中性事实）**：条目身份绑定原始文件 SHA-256、方言、sqlglot 版本与解析缓存格式版本。只复用分句、AST/token 分类与中性 `attrs`；`old_type`、`relation`、`type_change`、`type_changes` 等跨文件推演结论永不入缓存。命中后用本轮 `FileInfo` 重新绑定路径、版本、方向、文件哈希与定位信息。同字节文件改名可复用中性解析结果，但路径绑定的状态检查点与 finding 不复用。
+2. **类型状态检查点（增量类型推演）**：为每个有序 up/single 文件保存完整规范化的入态/出态快照（被追踪对象的限定身份 `表.列` 与完整列类型描述，而非摘要字符串）与该文件的类型标注增量。仅当解析身份、文件位置（rel_path/version/direction）、语句序集合与文件开始时的完整类型状态全部相同时才命中复用；否则从最早受影响位置重算并向后传播，直到某文件入态重新与检查点收敛才停止。token fallback、对象身份无法规范化或排序键变化时毒化到文件链末端，不猜测收敛。
+
+规则匹配、豁免、回滚配对、历史 diff、finding/fingerprint/run_id 生成与报告输出**不在任何缓存层内**，每次运行都重新执行。因此只改 `rules/default.yml` 的严重级别时，解析与类型状态检查点仍可复用，但 finding、门禁与报告会按新规则重算；只改 `exemptions.yml` 时也不会复用旧的豁免状态。缓存写入采用同目录临时文件 + 原子 `os.replace`，并发审计进程、部分写入或只读缓存目录都不会阻断审计，也不会留下可被误命中的半成品。
+
 规则字段：`id`、`title`、`severity`、`category`、`applies_to`、`match`、`message`、`suggestion`、`enabled`，并可附加 `dialects`、`directions`、`path_globs` 作用域。豁免字段：`id`、`rule_id`、`path_glob`、`version`、`fingerprint`、`reason`、`expires_on`；其中 `reason` 与 `expires_on` 必填。
 
 所有配置路径均相对于配置文件所在目录解析；报告中的文件路径统一使用 POSIX 相对路径。
